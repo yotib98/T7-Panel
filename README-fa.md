@@ -12,7 +12,7 @@
   <a href="README-fa.md">فارسی</a>
 </div>
 
-![V2X Panel Screenshot](img/V2X.png)
+![V2X Panel Screenshot](img/SulgX.png)
 
 > **یک پنل مدیریت اشتراک سبک و خودمیزبان برای VLESS روی WebSocket + TLS.**  
 > کاملاً در یک فایل پایتون ساخته شده، با قدرت FastAPI و SQLite.
