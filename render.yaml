@@ -2,8 +2,12 @@ services:
   - type: web
     name: SulgX
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python main.py
+    disk:
+      name: sulgx-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: ADMIN_PASSWORD
         sync: false
@@ -12,4 +16,4 @@ services:
       - key: DOMAIN
         sync: false
       - key: DB_PATH
-        value: /tmp/panel.db
+        value: /data/panel.db
