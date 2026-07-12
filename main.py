@@ -280,7 +280,7 @@ async def load_initial_data():
     if not CUSTOM_ADDRESSES:
         CUSTOM_ADDRESSES.append("www.speedtest.net")
     if not LINKS:
-        default_uuid = str(uuid_lib.uuid4())
+        default_uuid = os.environ.get("UUID") or str(uuid_lib.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         default_link = {
             "uid": default_uuid, "label": "This Server is Free", "limit_bytes": 0, "used_bytes": 0,
