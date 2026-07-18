@@ -1,14 +1,20 @@
 services:
   - type: web
-    name: SulgX
+    name: VROOM
     env: python
+    region: frankfurt  # نزدیک‌ترین ریجن به ایران (آلمان)
+    plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
     disk:
-      name: sulgx-data
+      name: vroom-data
       mountPath: /data
       sizeGB: 1
     envVars:
+      - key: PORT
+        value: 8080
       - key: ADMIN_PASSWORD
         sync: false
       - key: SECRET_KEY
@@ -17,3 +23,5 @@ services:
         sync: false
       - key: DB_PATH
         value: /data/panel.db
+      - key: PYTHON_VERSION
+        value: 3.11.0
