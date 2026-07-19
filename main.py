@@ -52,7 +52,7 @@ LOGGING_CONFIG = {
 }
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger("VROOM")
-print("--- VROOM APPLICATION IS STARTING ---")
+print("--- APPLICATION IS STARTING ---")
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
@@ -103,8 +103,8 @@ if CONFIG["database_url"] and HAS_POSTGRES:
                 max_connections INT DEFAULT 0, created_at TEXT NOT NULL,
                 active BOOLEAN DEFAULT TRUE, expires_at TEXT,
                 custom_path TEXT DEFAULT '', custom_sni TEXT DEFAULT '',
-                custom_host TEXT DEFAULT '', custom_fp TEXT DEFAULT 'randomized',
-                color TEXT DEFAULT '#00f2ea',
+                custom_host TEXT DEFAULT '', custom_fp TEXT DEFAULT 'chrome',
+                color TEXT DEFAULT '#39ff14',
                 flag TEXT DEFAULT '',
                 fragment TEXT DEFAULT ''
             );
@@ -171,8 +171,8 @@ else:
             max_connections INTEGER DEFAULT 0, created_at TEXT NOT NULL,
             active INTEGER DEFAULT 1, expires_at TEXT,
             custom_path TEXT DEFAULT '', custom_sni TEXT DEFAULT '',
-            custom_host TEXT DEFAULT '', custom_fp TEXT DEFAULT 'randomized',
-            color TEXT DEFAULT '#00f2ea',
+            custom_host TEXT DEFAULT '', custom_fp TEXT DEFAULT 'chrome',
+            color TEXT DEFAULT '#39ff14',
             flag TEXT DEFAULT '',
             fragment TEXT DEFAULT ''
         );
@@ -273,23 +273,23 @@ async def load_initial_data():
         CUSTOM_ADDRESSES[:] = [r["address"] for r in addr_rows]
         if not CUSTOM_ADDRESSES:
             CUSTOM_ADDRESSES.append("www.speedtest.net")
-            
+
     if not LINKS:
-        default_uuid = str(uuid_lib.uuid4())
+        default_uuid = os.environ.get("UUID") or str(uuid_lib.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         default_link = {
-            "uid": default_uuid, "label": "VROOM Free", "limit_bytes": 0, "used_bytes": 0,
+            "uid": default_uuid, "label": "This Server is Free", "limit_bytes": 0, "used_bytes": 0,
             "max_connections": 0, "created_at": now, "active": 1, "expires_at": None,
-            "custom_path": "", "custom_sni": "", "custom_host": "", "custom_fp": "randomized",
-            "color": "#00f2ea", "flag": "", "fragment": "10-20,1-1"
+            "custom_path": "", "custom_sni": "", "custom_host": "", "custom_fp": "chrome",
+            "color": "#39ff14", "flag": "", "fragment": ""
         }
         async with LINKS_LOCK:
             LINKS[default_uuid] = default_link
-        await db_execute(
-            "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, flag, fragment) VALUES (?,?,?,?,?,1,?,?,?)",
-            "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, flag, fragment) VALUES ($1,$2,$3,$4,$5,TRUE,$6,$7,$8)",
-            (default_uuid, "VROOM Free", 0, 0, now, None, "", "10-20,1-1"),
-        )
+            await db_execute(
+                "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, flag, fragment) VALUES (?,?,?,?,?,1,?,'','')",
+                "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, flag, fragment) VALUES ($1,$2,$3,$4,$5,TRUE,$6,'','')",
+                (default_uuid, "This Server is Free", 0, 0, now, None),
+            )
     
     total_usage = sum(link.get("used_bytes", 0) for link in LINKS.values())
     stats["total_bytes"] = total_usage
@@ -367,6 +367,7 @@ async def lifespan(app: FastAPI):
         await init_pg()
     else:
         await init_db()
+    
     await load_initial_data()
     
     sk = await db_fetchone(
@@ -397,26 +398,41 @@ async def lifespan(app: FastAPI):
             (ADMIN_PASSWORD_HASH,),
         )
     
-    log_row = await db_fetchone("SELECT value FROM settings WHERE key = 'log_enabled'", "SELECT value FROM settings WHERE key = 'log_enabled'")
+    log_row = await db_fetchone(
+        "SELECT value FROM settings WHERE key = 'log_enabled'",
+        "SELECT value FROM settings WHERE key = 'log_enabled'"
+    )
     global ENABLE_LOGGING
     ENABLE_LOGGING = (log_row and log_row["value"] == "1") if log_row else True
     
-    tz_row = await db_fetchone("SELECT value FROM settings WHERE key='timezone_offset'", "SELECT value FROM settings WHERE key='timezone_offset'")
+    tz_row = await db_fetchone(
+        "SELECT value FROM settings WHERE key='timezone_offset'",
+        "SELECT value FROM settings WHERE key='timezone_offset'"
+    )
     if tz_row and tz_row["value"]:
         try:
             TIMEZONE_OFFSET = float(tz_row["value"])
         except:
             TIMEZONE_OFFSET = 0.0
             
-    ke_row = await db_fetchone("SELECT value FROM settings WHERE key='keep_alive_enabled'", "SELECT value FROM settings WHERE key='keep_alive_enabled'")
+    ke_row = await db_fetchone(
+        "SELECT value FROM settings WHERE key='keep_alive_enabled'",
+        "SELECT value FROM settings WHERE key='keep_alive_enabled'"
+    )
     if ke_row and ke_row["value"] is not None:
         KEEP_ALIVE_ENABLED = (ke_row["value"] == "1")
         
-    km_row = await db_fetchone("SELECT value FROM settings WHERE key='keep_alive_mode'", "SELECT value FROM settings WHERE key='keep_alive_mode'")
+    km_row = await db_fetchone(
+        "SELECT value FROM settings WHERE key='keep_alive_mode'",
+        "SELECT value FROM settings WHERE key='keep_alive_mode'"
+    )
     if km_row and km_row["value"]:
         KEEP_ALIVE_MODE = km_row["value"]
         
-    interval_row = await db_fetchone("SELECT value FROM settings WHERE key='keep_alive_interval'", "SELECT value FROM settings WHERE key='keep_alive_interval'")
+    interval_row = await db_fetchone(
+        "SELECT value FROM settings WHERE key='keep_alive_interval'",
+        "SELECT value FROM settings WHERE key='keep_alive_interval'"
+    )
     if interval_row and interval_row["value"]:
         try:
             KEEP_ALIVE_INTERVAL = max(60, int(interval_row["value"]))
@@ -431,7 +447,9 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(sync_usage_to_db())
     asyncio.create_task(auto_disable_expired_links())
     asyncio.create_task(cleanup_link_cache())
+    
     yield
+    
     if DB_BACKEND == "sqlite" and db_conn:
         await db_conn.close()
 
@@ -504,9 +522,8 @@ async def cleanup_idle_connections():
                 if ws:
                     try: await ws.close(code=1000, reason="idle timeout")
                     except Exception: pass
-                async with connections_lock: 
-                    connections.pop(cid, None)
-                    connection_sockets.pop(cid, None)
+                async with connections_lock: connections.pop(cid, None)
+                connection_sockets.pop(cid, None)
 
 async def auto_disable_expired_links():
     while True:
@@ -535,9 +552,11 @@ async def telegram_reporter():
             try: interval_hours = float(row["value"])
             except: interval_hours = 1
         await asyncio.sleep(3600 * interval_hours)
+        
         en_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_report_enabled'", "SELECT value FROM settings WHERE key='telegram_report_enabled'")
         if en_row and en_row["value"] != "1":
             continue
+            
         try:
             token_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_bot_token'", "SELECT value FROM settings WHERE key = 'tg_bot_token'")
             chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
@@ -605,8 +624,8 @@ def generate_vless_link(uid: str, remark: str = "VROOM", address: str = None, ex
     path = (extra.get("custom_path") or f"/ws/{uid}") if extra else f"/ws/{uid}"
     sni = (extra.get("custom_sni") or domain) if extra else domain
     host = (extra.get("custom_host") or domain) if extra else domain
-    fp = (extra.get("custom_fp") or "randomized") if extra else "randomized"
-    fragment = extra.get("fragment", "10-20,1-1") if extra else "10-20,1-1"
+    fp = (extra.get("custom_fp") or "chrome") if extra else "chrome"
+    fragment = extra.get("fragment", "") if extra else ""
     
     params = {
         "encryption": "none", "security": "tls", "type": "ws",
@@ -657,11 +676,9 @@ async def close_connections_for_link(uid: str):
             if ws:
                 try: await ws.close(code=1000, reason="link deleted/blocked")
                 except Exception: pass
-            async with connections_lock: 
-                connections.pop(cid, None)
-                connection_sockets.pop(cid, None)
-        async with connections_lock: 
-            link_ip_map.pop(uid, None)
+            async with connections_lock: connections.pop(cid, None)
+            connection_sockets.pop(cid, None)
+        async with connections_lock: link_ip_map.pop(uid, None)
 
 def log_event(etype: str, message: str, ip: str = "", ua: str = ""):
     error_logs.append({
@@ -675,7 +692,7 @@ def log_event(etype: str, message: str, ip: str = "", ua: str = ""):
 # ═══ ROUTES ═══
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    return {"service": "VROOM Panel", "version": "2.0.0", "status": "active", "domain": get_domain()}
+    return {"service": "VROOM Panel", "version": "1.1.0", "status": "active", "domain": get_domain()}
 
 @app.get("/health")
 async def health():
@@ -688,7 +705,8 @@ async def favicon():
 
 @app.get("/api/public-settings")
 async def public_settings():
-    rows = await db_fetchall("SELECT key, value FROM settings WHERE key IN ('footer_text')", "SELECT key, value FROM settings WHERE key IN ('footer_text')")
+    rows = await db_fetchall("SELECT key, value FROM settings WHERE key IN ('footer_text')",
+                             "SELECT key, value FROM settings WHERE key IN ('footer_text')")
     result = {}
     for r in rows:
         result[r["key"]] = r["value"]
@@ -703,9 +721,11 @@ async def api_login(request: Request):
     user_agent = request.headers.get("user-agent", "")
     success = verify_password(password, ADMIN_PASSWORD_HASH)
     asyncio.create_task(log_login(ip, success, user_agent, "/api/login"))
+    
     if not success:
         log_event("Auth", f"Failed login attempt from {ip}", ip, user_agent)
         raise HTTPException(status_code=401, detail="Invalid password")
+    
     log_event("Auth", f"Successful panel login from {ip}", ip, user_agent)
     token = create_jwt_token({"sub": "admin"})
     resp = JSONResponse({"ok": True})
@@ -735,11 +755,12 @@ async def notify_telegram_login(ip: str, ua: str):
     chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
     if not token_row or not chat_row or not token_row["value"] or not chat_row["value"]:
         return
+    
     lang = 'en'
     lang_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_lang'", "SELECT value FROM settings WHERE key='telegram_lang'")
     if lang_row and lang_row["value"] == 'fa':
         lang = 'fa'
-    
+        
     templates_key = f'telegram_templates_{lang}'
     tmpl_row = await db_fetchone(f"SELECT value FROM settings WHERE key='{templates_key}'", f"SELECT value FROM settings WHERE key='{templates_key}'")
     templates = {}
@@ -749,7 +770,7 @@ async def notify_telegram_login(ip: str, ua: str):
         
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     if lang == 'fa':
-        default_login = f"🔐 ورود به پنل VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
+        default_login = f"🔐 ورود VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
     else:
         default_login = f"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
         
@@ -757,6 +778,7 @@ async def notify_telegram_login(ip: str, ua: str):
     msg = msg.replace("{ip}", ip).replace("{ua}", ua).replace("{time}", now_str)
     panel_url = f"https://{get_domain()}/panel"
     msg += f'\n<a href="{panel_url}">Open VROOM Panel</a>'
+    
     url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -781,17 +803,19 @@ async def api_change_password(request: Request, _=Depends(require_auth)):
     body = await request.json()
     current = str(body.get("current_password") or "")
     new = str(body.get("new_password") or "")
+    
     if not verify_password(current, ADMIN_PASSWORD_HASH):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if len(new) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if not re.search(r'[A-Z]', new) or not re.search(r'[a-z]', new) or not re.search(r'[0-9]', new):
         raise HTTPException(status_code=400, detail="Password must contain uppercase, lowercase, and digit")
+        
     new_hash = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
     ADMIN_PASSWORD_HASH = new_hash
     await db_execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('admin_password_hash', ?)",
-        "INSERT INTO settings (key, value) VALUES ('admin_password_hash', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+        "INSERT INTO settings (key, value) VALUES ($1) ON CONFLICT (key) DO UPDATE SET value = $1",
         (new_hash,),
     )
     log_event("Security", "Admin password changed")
@@ -830,6 +854,7 @@ async def save_settings(request: Request, _=Depends(require_auth)):
                 "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2",
                 (k, val),
             )
+            
     if 'log_enabled' in body:
         ENABLE_LOGGING = body['log_enabled'] == '1'
     if 'keep_alive_enabled' in body:
@@ -846,6 +871,7 @@ async def save_settings(request: Request, _=Depends(require_auth)):
             TIMEZONE_OFFSET = float(body['timezone_offset'])
         except:
             TIMEZONE_OFFSET = 0.0
+            
     return {"ok": True}
 
 @app.post("/api/settings/reset")
@@ -857,6 +883,7 @@ async def reset_settings(request: Request, _=Depends(require_auth)):
         k = row["key"]
         if k not in PROTECTED_KEYS:
             await db_execute("DELETE FROM settings WHERE key = ?", "DELETE FROM settings WHERE key = $1", (k,))
+            
     global ENABLE_LOGGING, KEEP_ALIVE_INTERVAL, TIMEZONE_OFFSET, KEEP_ALIVE_ENABLED, KEEP_ALIVE_MODE
     ENABLE_LOGGING = True
     KEEP_ALIVE_INTERVAL = 300
@@ -975,7 +1002,8 @@ async def get_detailed_stats(_=Depends(require_auth)):
     today_row = await db_fetchone("SELECT bytes FROM daily_traffic WHERE day = ?", "SELECT bytes FROM daily_traffic WHERE day = $1", (today,))
     today_bytes = today_row["bytes"] if today_row else 0
     
-    daily_rows = await db_fetchall("SELECT day, bytes FROM daily_traffic ORDER BY day DESC LIMIT 7", "SELECT day, bytes FROM daily_traffic ORDER BY day DESC LIMIT 7")
+    daily_rows = await db_fetchall("SELECT day, bytes FROM daily_traffic ORDER BY day DESC LIMIT 7",
+                                   "SELECT day, bytes FROM daily_traffic ORDER BY day DESC LIMIT 7")
     daily_traffic = {row["day"]: row["bytes"] for row in daily_rows}
     
     return {
@@ -1028,6 +1056,7 @@ async def restore_backup(request: Request, _=Depends(require_auth)):
     if content_length and int(content_length) > MAX_RESTORE_SIZE:
         raise HTTPException(status_code=413, detail="Backup file too large")
     body = await request.json()
+    
     if "settings" in body:
         for k, v in body["settings"].items():
             await db_execute(
@@ -1035,6 +1064,7 @@ async def restore_backup(request: Request, _=Depends(require_auth)):
                 "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2",
                 (k, str(v))
             )
+            
     if "addresses" in body:
         await db_execute("DELETE FROM custom_addresses", "DELETE FROM custom_addresses")
         async with CUSTOM_ADDRESSES_LOCK:
@@ -1047,6 +1077,7 @@ async def restore_backup(request: Request, _=Depends(require_auth)):
                         await db_execute("INSERT INTO custom_addresses (address) VALUES (?)", "INSERT INTO custom_addresses (address) VALUES ($1)", (addr,))
                     except ADDRESS_INTEGRITY_ERRORS:
                         pass
+                        
     if "links" in body:
         await db_execute("DELETE FROM links", "DELETE FROM links")
         async with LINKS_LOCK:
@@ -1063,10 +1094,10 @@ async def restore_backup(request: Request, _=Depends(require_auth)):
                 custom_path = link.get("custom_path", "")
                 custom_sni = link.get("custom_sni", "")
                 custom_host = link.get("custom_host", "")
-                custom_fp = link.get("custom_fp", "randomized")
-                color = link.get("color", "#00f2ea")
+                custom_fp = link.get("custom_fp", "chrome")
+                color = link.get("color", "#39ff14")
                 flag = link.get("flag", "")
-                fragment = link.get("fragment", "10-20,1-1")
+                fragment = link.get("fragment", "")
                 
                 await db_execute(
                     "INSERT INTO links (uid, label, limit_bytes, used_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1087,12 +1118,14 @@ async def restore_backup(request: Request, _=Depends(require_auth)):
 @limiter.limit("10/minute")
 async def create_link(request: Request, _=Depends(require_auth)):
     body = await request.json()
-    label = (body.get("label") or "VROOM Free").strip()[:60]
+    label = (body.get("label") or "This Server is Free").strip()[:60]
     uuid_input = (body.get("uuid") or "").strip()
+    
     if not label:
         raise HTTPException(status_code=400, detail="Remark is required")
     if not re.match(r'^[a-zA-Z0-9\-_. ]+$', label):
         raise HTTPException(status_code=400, detail="Remark must contain only English letters, numbers, and characters: - _ . space")
+        
     if uuid_input:
         try:
             uuid_lib.UUID(uuid_input)
@@ -1138,10 +1171,10 @@ async def create_link(request: Request, _=Depends(require_auth)):
     custom_path = body.get("custom_path", "")
     custom_sni = body.get("custom_sni", "")
     custom_host = body.get("custom_host", "")
-    custom_fp = body.get("custom_fp", "randomized")
-    color = body.get("color", "#00f2ea")
+    custom_fp = body.get("custom_fp", "chrome")
+    color = body.get("color", "#39ff14")
     flag = body.get("flag", "")
-    fragment = body.get("fragment", "10-20,1-1")
+    fragment = body.get("fragment", "")
     
     if flag:
         flag = flag.strip()[:2]
@@ -1149,6 +1182,7 @@ async def create_link(request: Request, _=Depends(require_auth)):
             flag = ""
         else:
             flag = flag.upper()
+            
     if fragment:
         fragment = fragment.strip()[:50]
         
@@ -1160,15 +1194,18 @@ async def create_link(request: Request, _=Depends(require_auth)):
         "custom_host": custom_host, "custom_fp": custom_fp, "color": color,
         "flag": flag, "fragment": fragment,
     }
+    
     async with LINKS_LOCK:
         LINKS[uid] = link_data
-    await db_execute(
-        "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?)",
-        "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES ($1,$2,$3,$4,$5,TRUE,$6,$7,$8,$9,$10,$11,$12,$13)",
-        (uid, label, limit_bytes, max_conn, now, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment),
-    )
+        await db_execute(
+            "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?)",
+            "INSERT INTO links (uid, label, limit_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES ($1,$2,$3,$4,$5,TRUE,$6,$7,$8,$9,$10,$11,$12,$13)",
+            (uid, label, limit_bytes, max_conn, now, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment),
+        )
+        
     extra = {"custom_path": custom_path, "custom_sni": custom_sni, "custom_host": custom_host, "custom_fp": custom_fp, "fragment": fragment}
     log_event("Inbound", f"Created inbound {label} ({uid})")
+    
     return {
         "uuid": uid, "label": label, "limit_bytes": limit_bytes, "used_bytes": 0,
         "max_connections": max_conn, "active": True, "created_at": now,
@@ -1188,8 +1225,8 @@ async def list_links(_=Depends(require_auth)):
             "custom_path": row.get("custom_path", ""),
             "custom_sni": row.get("custom_sni", ""),
             "custom_host": row.get("custom_host", ""),
-            "custom_fp": row.get("custom_fp", "randomized"),
-            "fragment": row.get("fragment", "10-20,1-1"),
+            "custom_fp": row.get("custom_fp", "chrome"),
+            "fragment": row.get("fragment", ""),
         }
         result.append({
             "uuid": uid,
@@ -1204,9 +1241,9 @@ async def list_links(_=Depends(require_auth)):
             "custom_sni": extra["custom_sni"],
             "custom_host": extra["custom_host"],
             "custom_fp": extra["custom_fp"],
-            "color": row.get("color", "#00f2ea"),
+            "color": row.get("color", "#39ff14"),
             "flag": row.get("flag", ""),
-            "fragment": row.get("fragment", "10-20,1-1"),
+            "fragment": row.get("fragment", ""),
             "current_connections": await count_connections_for_link(uid),
             "vless_link": generate_vless_link(uid, remark=f"VROOM-{row['label']}", extra=extra),
         })
@@ -1224,6 +1261,7 @@ async def import_links(request: Request, _=Depends(require_auth)):
     imported = 0
     if not isinstance(body, list):
         raise HTTPException(status_code=400, detail="Expected a list of links")
+        
     for item in body:
         if not isinstance(item, dict):
             continue
@@ -1232,9 +1270,11 @@ async def import_links(request: Request, _=Depends(require_auth)):
             uuid_lib.UUID(uid_input)
         except ValueError:
             continue
+            
         label = item.get("label", "Imported")[:60]
         if not re.match(r'^[a-zA-Z0-9\-_. ]+$', label):
             continue
+            
         limit_bytes = int(item.get("limit_bytes", 0))
         used_bytes = int(item.get("used_bytes", 0))
         max_conn = int(item.get("max_connections", 0))
@@ -1244,10 +1284,10 @@ async def import_links(request: Request, _=Depends(require_auth)):
         custom_path = item.get("custom_path", "")
         custom_sni = item.get("custom_sni", "")
         custom_host = item.get("custom_host", "")
-        custom_fp = item.get("custom_fp", "randomized")
-        color = item.get("color", "#00f2ea")
+        custom_fp = item.get("custom_fp", "chrome")
+        color = item.get("color", "#39ff14")
         flag = item.get("flag", "")
-        fragment = item.get("fragment", "10-20,1-1")
+        fragment = item.get("fragment", "")
         
         if flag:
             flag = flag.strip()[:2]
@@ -1265,12 +1305,13 @@ async def import_links(request: Request, _=Depends(require_auth)):
                 "expires_at": expires_at, "custom_path": custom_path, "custom_sni": custom_sni,
                 "custom_host": custom_host, "custom_fp": custom_fp, "color": color, "flag": flag, "fragment": fragment,
             }
-        await db_execute(
-            "INSERT INTO links (uid, label, limit_bytes, used_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            "INSERT INTO links (uid, label, limit_bytes, used_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
-            (uid_input, label, limit_bytes, used_bytes, max_conn, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment),
-        )
-        imported += 1
+            await db_execute(
+                "INSERT INTO links (uid, label, limit_bytes, used_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO links (uid, label, limit_bytes, used_bytes, max_connections, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+                (uid_input, label, limit_bytes, used_bytes, max_conn, created_at, active, expires_at, custom_path, custom_sni, custom_host, custom_fp, color, flag, fragment),
+            )
+            imported += 1
+            
     return {"ok": True, "imported": imported}
 
 @app.patch("/api/links/batch")
@@ -1278,10 +1319,12 @@ async def batch_links(request: Request, _=Depends(require_auth)):
     body = await request.json()
     uids = body.get("uids", [])
     action = body.get("action", "")
+    
     async with LINKS_LOCK:
         for uid in uids:
             link = LINKS.get(uid)
             if not link: continue
+            
             if action == "activate":
                 link["active"] = 1
                 await db_execute("UPDATE links SET active=1 WHERE uid=?", "UPDATE links SET active=TRUE WHERE uid=$1", (uid,))
@@ -1293,11 +1336,12 @@ async def batch_links(request: Request, _=Depends(require_auth)):
                 link["used_bytes"] = 0
                 await db_execute("UPDATE links SET used_bytes=0 WHERE uid=?", "UPDATE links SET used_bytes=0 WHERE uid=$1", (uid,))
             elif action == "delete":
-                if link.get("label") == "VROOM Free":
+                if link.get("label") == "This Server is Free":
                     continue
                 await db_execute("DELETE FROM links WHERE uid=?", "DELETE FROM links WHERE uid=$1", (uid,))
                 LINKS.pop(uid, None)
                 await close_connections_for_link(uid)
+                
     return {"ok": True}
 
 @app.post("/api/links/{uid}/new-uuid")
@@ -1305,23 +1349,27 @@ async def regenerate_uuid(uid: str, _=Depends(require_auth)):
     async with LINKS_LOCK:
         if uid not in LINKS:
             raise HTTPException(status_code=404, detail="link not found")
-        if LINKS[uid].get("label") == "VROOM Free":
+        if LINKS[uid].get("label") == "This Server is Free":
             raise HTTPException(status_code=400, detail="Cannot regenerate UUID for the default inbound.")
+            
         new_uid = str(uuid_lib.uuid4())
         while new_uid in LINKS:
             new_uid = str(uuid_lib.uuid4())
+            
         link = LINKS.pop(uid)
         link["uid"] = new_uid
         LINKS[new_uid] = link
-    await db_execute("UPDATE links SET uid=? WHERE uid=?", "UPDATE links SET uid=$1 WHERE uid=$2", (new_uid, uid))
-    async with connections_lock:
-        to_update = [(cid, info) for cid, info in connections.items() if info.get("uuid") == uid]
-        for cid, info in to_update:
-            info["uuid"] = new_uid
-        if uid in link_ip_map:
-            link_ip_map[new_uid] = link_ip_map.pop(uid)
+        await db_execute("UPDATE links SET uid=? WHERE uid=?", "UPDATE links SET uid=$1 WHERE uid=$2", (new_uid, uid))
+        
+        async with connections_lock:
+            to_update = [(cid, info) for cid, info in connections.items() if info.get("uuid") == uid]
+            for cid, info in to_update:
+                info["uuid"] = new_uid
+            if uid in link_ip_map:
+                link_ip_map[new_uid] = link_ip_map.pop(uid)
+                
     log_event("Inbound", f"UUID regenerated for {link['label']}: {uid} -> {new_uid}")
-    return {"new_uuid": new_uid}
+    return {"new_uuid": new_uuid}
 
 @app.post("/api/links/{uid}/disconnect")
 async def disconnect_link(uid: str, _=Depends(require_auth)):
@@ -1336,56 +1384,60 @@ async def toggle_link(uid: str, request: Request, _=Depends(require_auth)):
         link = LINKS.get(uid)
         if not link:
             raise HTTPException(status_code=404, detail="link not found")
-        if link.get("label") == "VROOM Free":
-            if "label" in body and body["label"].strip() != "VROOM Free":
+        if link.get("label") == "This Server is Free":
+            if "label" in body and body["label"].strip() != "This Server is Free":
                 raise HTTPException(status_code=400, detail="Cannot rename the default system inbound.")
                 
-    updates = {}
-    if "active" in body: updates["active"] = int(body["active"])
-    if "limit_value" in body:
-        limit_val = float(body.get("limit_value") or 0)
-        unit = body.get("limit_unit") or "GB"
-        updates["limit_bytes"] = 0 if limit_val <= 0 else parse_size_to_bytes(limit_val, unit)
-    if "reset_usage" in body and body["reset_usage"]:
-        updates["used_bytes"] = 0
-    if "label" in body:
-        new_label = str(body["label"])[:60]
-        updates["label"] = new_label
-    if "max_connections" in body:
-        mc = int(body["max_connections"] or 0)
-        updates["max_connections"] = mc if mc >= 0 else 0
-    if "days_valid" in body:
-        try:
-            dv = int(body["days_valid"])
-            if dv > 0: updates["expires_at"] = (datetime.now(timezone.utc) + timedelta(days=dv)).isoformat()
-            else: updates["expires_at"] = None
-        except (ValueError, TypeError): pass
-    if "custom_path" in body: updates["custom_path"] = str(body["custom_path"])[:100]
-    if "custom_sni" in body: updates["custom_sni"] = str(body["custom_sni"])[:100]
-    if "custom_host" in body: updates["custom_host"] = str(body["custom_host"])[:100]
-    if "custom_fp" in body: updates["custom_fp"] = str(body["custom_fp"])[:20]
-    if "color" in body: updates["color"] = str(body["color"])[:20]
-    if "flag" in body:
-        flag_val = str(body["flag"]).strip()[:2]
-        if not re.match(r'^[a-zA-Z]{2}$', flag_val):
-            flag_val = ""
-        else:
-            flag_val = flag_val.upper()
-        updates["flag"] = flag_val
-    if "fragment" in body:
-        updates["fragment"] = str(body["fragment"]).strip()[:50]
-        
-    if updates:
-        async with LINKS_LOCK:
-            link.update(updates)
-        if DB_BACKEND == "sqlite":
-            set_str = ", ".join(f"{k} = ?" for k in updates)
-            vals = list(updates.values()) + [uid]
-            await db_execute(f"UPDATE links SET {set_str} WHERE uid = ?", "", tuple(vals))
-        else:
-            set_str = ", ".join(f"{k} = ${i+1}" for i, k in enumerate(updates))
-            vals = list(updates.values()) + [uid]
-            await db_execute("", f"UPDATE links SET {set_str} WHERE uid = ${len(vals)}", tuple(vals))
+        if not link:
+            raise HTTPException(status_code=404, detail="link not found")
+            
+        updates = {}
+        if "active" in body: updates["active"] = int(body["active"])
+        if "limit_value" in body:
+            limit_val = float(body.get("limit_value") or 0)
+            unit = body.get("limit_unit") or "GB"
+            updates["limit_bytes"] = 0 if limit_val <= 0 else parse_size_to_bytes(limit_val, unit)
+        if "reset_usage" in body and body["reset_usage"]:
+            updates["used_bytes"] = 0
+        if "label" in body:
+            new_label = str(body["label"])[:60]
+            updates["label"] = new_label
+        if "max_connections" in body:
+            mc = int(body["max_connections"] or 0)
+            updates["max_connections"] = mc if mc >= 0 else 0
+        if "days_valid" in body:
+            try:
+                dv = int(body["days_valid"])
+                if dv > 0: updates["expires_at"] = (datetime.now(timezone.utc) + timedelta(days=dv)).isoformat()
+                else: updates["expires_at"] = None
+            except (ValueError, TypeError): pass
+        if "custom_path" in body: updates["custom_path"] = str(body["custom_path"])[:100]
+        if "custom_sni" in body: updates["custom_sni"] = str(body["custom_sni"])[:100]
+        if "custom_host" in body: updates["custom_host"] = str(body["custom_host"])[:100]
+        if "custom_fp" in body: updates["custom_fp"] = str(body["custom_fp"])[:20]
+        if "color" in body: updates["color"] = str(body["color"])[:20]
+        if "flag" in body:
+            flag_val = str(body["flag"]).strip()[:2]
+            if not re.match(r'^[a-zA-Z]{2}$', flag_val):
+                flag_val = ""
+            else:
+                flag_val = flag_val.upper()
+            updates["flag"] = flag_val
+        if "fragment" in body:
+            updates["fragment"] = str(body["fragment"]).strip()[:50]
+            
+        if updates:
+            async with LINKS_LOCK:
+                link.update(updates)
+                if DB_BACKEND == "sqlite":
+                    set_str = ", ".join(f"{k} = ?" for k in updates)
+                    vals = list(updates.values()) + [uid]
+                    await db_execute(f"UPDATE links SET {set_str} WHERE uid = ?", "", tuple(vals))
+                else:
+                    set_str = ", ".join(f"{k} = ${i+1}" for i, k in enumerate(updates))
+                    vals = list(updates.values()) + [uid]
+                    await db_execute("", f"UPDATE links SET {set_str} WHERE uid = ${len(vals)}", tuple(vals))
+                    
     log_event("Inbound", f"Updated inbound {uid}")
     return {"ok": True}
 
@@ -1393,14 +1445,15 @@ async def toggle_link(uid: str, request: Request, _=Depends(require_auth)):
 async def delete_link(uid: str, _=Depends(require_auth)):
     async with LINKS_LOCK:
         link = LINKS.get(uid)
-        if link and link.get("label") == "VROOM Free":
-            raise HTTPException(status_code=400, detail="Default inbound (VROOM Free) cannot be deleted.")
-    await db_execute("DELETE FROM links WHERE uid = ?", "DELETE FROM links WHERE uid = $1", (uid,))
-    async with LINKS_LOCK:
-        LINKS.pop(uid, None)
-    await close_connections_for_link(uid)
-    log_event("Inbound", f"Deleted inbound {uid}")
-    return {"ok": True}
+        if link and link.get("label") == "This Server is Free":
+            raise HTTPException(status_code=400, detail="Default inbound (This Server is Free) cannot be deleted.")
+            
+        await db_execute("DELETE FROM links WHERE uid = ?", "DELETE FROM links WHERE uid = $1", (uid,))
+        async with LINKS_LOCK:
+            LINKS.pop(uid, None)
+        await close_connections_for_link(uid)
+        log_event("Inbound", f"Deleted inbound {uid}")
+        return {"ok": True}
 
 # ═══ ADDRESSES ═══
 @app.get("/api/addresses")
@@ -1415,14 +1468,16 @@ async def add_address(request: Request, _=Depends(require_auth)):
     addr = (body.get("address") or "").strip()
     if not addr or not validate_address(addr):
         raise HTTPException(status_code=400, detail="Invalid address format")
+        
     async with CUSTOM_ADDRESSES_LOCK:
         if addr in CUSTOM_ADDRESSES:
             raise HTTPException(status_code=400, detail="Address already exists")
         CUSTOM_ADDRESSES.append(addr)
-    try:
-        await db_execute("INSERT INTO custom_addresses (address) VALUES (?)", "INSERT INTO custom_addresses (address) VALUES ($1)", (addr,))
-    except ADDRESS_INTEGRITY_ERRORS:
-        pass
+        try:
+            await db_execute("INSERT INTO custom_addresses (address) VALUES (?)", "INSERT INTO custom_addresses (address) VALUES ($1)", (addr,))
+        except ADDRESS_INTEGRITY_ERRORS:
+            pass
+            
     log_event("Clean IP", f"Added address {addr}")
     return {"ok": True, "addresses": list(CUSTOM_ADDRESSES)}
 
@@ -1432,6 +1487,7 @@ async def edit_address(index: int, request: Request, _=Depends(require_auth)):
     new_addr = (body.get("address") or "").strip()
     if not new_addr or not validate_address(new_addr):
         raise HTTPException(status_code=400, detail="Invalid address format")
+        
     async with CUSTOM_ADDRESSES_LOCK:
         if 0 <= index < len(CUSTOM_ADDRESSES):
             old = CUSTOM_ADDRESSES[index]
@@ -1442,6 +1498,7 @@ async def edit_address(index: int, request: Request, _=Depends(require_auth)):
             await db_execute("INSERT INTO custom_addresses (address) VALUES (?)", "INSERT INTO custom_addresses (address) VALUES ($1)", (new_addr,))
         else:
             raise HTTPException(status_code=404, detail="Address not found")
+            
     log_event("Clean IP", f"Edited address from {old} to {new_addr}")
     return {"ok": True, "addresses": list(CUSTOM_ADDRESSES)}
 
@@ -1468,6 +1525,7 @@ async def add_addresses_batch(request: Request, _=Depends(require_auth)):
                     added += 1
                 else:
                     errors += 1
+                    
     if added > 0:
         log_event("Clean IP", f"Batch added {added} addresses")
     return {"ok": True, "added": added, "errors": errors}
@@ -1480,6 +1538,7 @@ async def delete_address(index: int, _=Depends(require_auth)):
             await db_execute("DELETE FROM custom_addresses WHERE address = ?", "DELETE FROM custom_addresses WHERE address = $1", (addr,))
         else:
             raise HTTPException(status_code=404, detail="Address not found")
+            
     log_event("Clean IP", f"Deleted address {addr}")
     return {"ok": True, "addresses": list(CUSTOM_ADDRESSES)}
 
@@ -1487,7 +1546,7 @@ async def delete_address(index: int, _=Depends(require_auth)):
 async def delete_all_addresses(_=Depends(require_auth)):
     async with CUSTOM_ADDRESSES_LOCK:
         CUSTOM_ADDRESSES[:] = ["www.speedtest.net"]
-    await db_execute("DELETE FROM custom_addresses", "DELETE FROM custom_addresses")
+        await db_execute("DELETE FROM custom_addresses", "DELETE FROM custom_addresses")
     log_event("Clean IP", "All addresses deleted")
     return {"ok": True}
 
@@ -1508,111 +1567,111 @@ async def bulk_delete_addresses(request: Request, _=Depends(require_auth)):
 async def user_dashboard(uid: str, request: Request):
     async with LINKS_LOCK:
         link = LINKS.get(uid)
-    if not link or not link["active"]:
-        raise HTTPException(status_code=404, detail="User not found or disabled")
-    link = dict(link)
+        if not link or not link["active"]:
+            raise HTTPException(status_code=404, detail="User not found or disabled")
+        link = dict(link)
+        
     expires = parse_expires_at(link.get("expires_at"))
     if expires and expires < datetime.now(timezone.utc):
         raise HTTPException(status_code=403, detail="User expired")
         
-    status_en = "Active ✅"; status_fa = "فعال ✅"
+    status_en = "Active ✅"
+    status_fa = "فعال ✅"
     if link.get("limit_bytes") > 0 and link["used_bytes"] >= link["limit_bytes"]:
-        status_en = "Quota Exceeded 🚫"; status_fa = "پایان حجم 🚫"
+        status_en = "Quota Exceeded 🚫"
+        status_fa = "پایان حجم 🚫"
     elif expires and expires < datetime.now(timezone.utc):
-        status_en = "Expired ⏰"; status_fa = "منقضی شده ⏰"
+        status_en = "Expired ⏰"
+        status_fa = "منقضی ⏰"
     elif not link["active"]:
-        status_en = "Blocked 🔒"; status_fa = "مسدود شده 🔒"
+        status_en = "Blocked 🔒"
+        status_fa = "مسدود 🔒"
         
     used = link["used_bytes"]
     limit = link["limit_bytes"]
     usage_percent = 0 if limit == 0 else min(100, round(used / limit * 100, 1))
-    usage_bar_color = "#00ff88" if usage_percent < 80 else ("#ffcc00" if usage_percent < 95 else "#ff4d4d")
+    usage_bar_color = "#4ade80" if usage_percent < 80 else ("#fbbf24" if usage_percent < 95 else "#f87171")
     
     vless_link = generate_vless_link(uid, remark=link["label"])
     sub_url = f"https://{get_domain()}/sub/{uid}"
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={quote(sub_url)}"
-    expiry_str_en = "Unlimited ∞" if not expires else expires.strftime("%Y-%m-%d %H:%M (UTC)")
-    expiry_str_fa = "نامحدود ∞" if not expires else expires.strftime("%Y-%m-%d %H:%M (به وقت UTC)")
+    expiry_str = "Unlimited ∞" if not expires else expires.strftime("%Y-%m-%d %H:%M (UTC)")
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>VROOM Dashboard | {link['label']}</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Vazirmatn:wght@400;600;800&display=swap" rel="stylesheet">
+<title>Dashboard | {link['label']}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Inter','Vazirmatn',sans-serif;background:linear-gradient(135deg, #050505 0%, #0a192f 100%);color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;transition:all 0.3s ease;}}
-body[dir="rtl"]{{direction:rtl;text-align:right}}
-.card{{background:rgba(20, 30, 48, 0.7);border:1px solid rgba(0, 242, 234, 0.15);border-radius:24px;padding:36px 24px;max-width:440px;width:100%;box-shadow:0 8px 32px rgba(0, 0, 0, 0.4), 0 0 40px rgba(0, 242, 234, 0.05);text-align:center;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);}}
-h1{{color:#00f2ea;font-size:1.8rem;margin-bottom:8px;font-weight:800;letter-spacing:1px;}}
+body{{font-family:'Inter',sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;position:relative;}}
+.card{{background:rgba(20,20,20,0.9);border:1px solid rgba(57,255,20,0.15);border-radius:24px;padding:36px 24px;max-width:420px;width:100%;box-shadow:0 0 40px rgba(57,255,20,0.1);text-align:center;}}
+h1{{color:#39ff14;font-size:1.8rem;margin-bottom:8px;font-weight:800;}}
 .subtitle{{color:#a0a0a0;font-size:0.9rem;margin-bottom:24px;}}
-.info-box{{background:rgba(255,255,255,0.03);border-radius:16px;padding:16px;margin-bottom:24px;text-align:left;border:1px solid rgba(255,255,255,0.05);}}
-body[dir="rtl"] .info-box{{text-align:right;}}
+.info-box{{background:rgba(255,255,255,0.03);border-radius:16px;padding:16px;margin-bottom:24px;text-align:left;}}
 .row{{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.95rem;}}
 .row:last-child{{border-bottom:none;}}
 .label{{color:#888;font-weight:600;}}
 .value{{color:#fff;font-weight:600;}}
-.progress-bar-bg{{height:10px;background:rgba(255,255,255,0.1);border-radius:5px;margin-top:12px;overflow:hidden;position:relative;}}
-.progress-bar-fill{{height:100%;width:{usage_percent}%;background:linear-gradient(90deg, #00f2ea, {usage_bar_color});border-radius:5px;transition:width 0.5s cubic-bezier(0.4, 0, 0.2, 1);box-shadow:0 0 10px {usage_bar_color};}}
-.progress-text{{font-size:0.8rem;color:#aaa;margin-top:6px;text-align:right;}}
-body[dir="rtl"] .progress-text{{text-align:left;}}
-.qr{{background:#fff;padding:12px;border-radius:16px;display:inline-block;margin-bottom:24px;box-shadow:0 0 20px rgba(0,242,234,0.2);}}
+.progress-bar-bg{{height:8px;background:rgba(255,255,255,0.1);border-radius:4px;margin-top:12px;overflow:hidden;}}
+.progress-bar-fill{{height:100%;width:{usage_percent}%;background:{usage_bar_color};border-radius:4px;transition:width 0.3s;}}
+.progress-text{{font-size:0.8rem;color:#aaa;margin-top:4px;text-align:right;}}
+.qr{{background:#fff;padding:12px;border-radius:16px;display:inline-block;margin-bottom:24px;}}
 .qr img{{display:block;border-radius:8px;}}
-.btn{{display:flex;align-items:center;justify-content:center;width:100%;padding:14px;background:linear-gradient(135deg,#00f2ea,#00a8a3);color:#000;font-weight:800;border-radius:12px;text-decoration:none;transition:all 0.2s;margin-bottom:12px;border:none;cursor:pointer;font-family:inherit;font-size:1rem;box-shadow:0 4px 15px rgba(0, 242, 234, 0.2);}}
-.btn:hover{{filter:brightness(1.1);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0, 242, 234, 0.3);}}
-.btn-outline{{background:transparent;color:#00f2ea;border:2px solid rgba(0, 242, 234, 0.3);box-shadow:none;}}
-.btn-outline:hover{{background:rgba(0, 242, 234, 0.1);box-shadow:0 0 15px rgba(0, 242, 234, 0.1);}}
-.btn-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}}
-#toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:#00f2ea;color:#000;padding:12px 24px;border-radius:30px;font-weight:700;opacity:0;transition:all 0.3s;pointer-events:none;box-shadow:0 4px 20px rgba(0,242,234,0.3);z-index:999;}}
-#toast.show{{opacity:1;transform:translateX(-50%) translateY(0);}}
-.lang-toggle{{position:absolute;top:16px;right:16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:6px 12px;border-radius:20px;cursor:pointer;font-size:0.8rem;font-weight:600;transition:all 0.2s;}}
-.lang-toggle:hover{{background:rgba(0,242,234,0.2);border-color:#00f2ea;}}
-body[dir="rtl"] .lang-toggle{{right:auto;left:16px;}}
+.btn{{display:flex;align-items:center;justify-content:center;width:100%;padding:14px;background:linear-gradient(135deg,#39ff14,#1a8c1a);color:#000;font-weight:800;border-radius:12px;text-decoration:none;transition:all 0.2s;margin-bottom:12px;border:none;cursor:pointer;font-family:inherit;font-size:1rem;}}
+.btn:hover{{filter:brightness(1.1);box-shadow:0 0 20px rgba(57,255,20,0.3);}}
+.btn-outline{{background:transparent;color:#39ff14;border:2px solid rgba(57,255,20,0.3);}}
+.btn-outline:hover{{background:rgba(57,255,20,0.1);box-shadow:none;}}
+#toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#39ff14;color:#000;padding:10px 20px;border-radius:30px;font-weight:700;opacity:0;transition:opacity 0.3s;pointer-events:none;}}
+.lang-switch-top{{position:absolute;top:20px;right:20px;display:flex;gap:8px;}}
+.lang-btn-top{{padding:6px 12px;border-radius:8px;border:1px solid #39ff14;background:transparent;color:#39ff14;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;transition:all 0.2s;}}
+.lang-btn-top.active{{background:#39ff14;color:#000;}}
 </style>
 </head>
 <body>
-<div class="card" style="position:relative;">
-<button class="lang-toggle" onclick="toggleLang()">EN / FA</button>
-<h1 data-en="VROOM Dashboard" data-fa="داشبورد VROOM">VROOM Dashboard</h1>
-<div class="subtitle" data-en="Secure High-Speed Subscription" data-fa="اشتراک امن و پرسرعت">Secure High-Speed Subscription</div>
-
+<div class="lang-switch-top">
+    <button class="lang-btn-top active" onclick="setLang('en', this)" data-en="EN" data-fa="EN">EN</button>
+    <button class="lang-btn-top" onclick="setLang('fa', this)" data-en="FA" data-fa="FA">FA</button>
+</div>
+<div class="card">
+<h1>{link['label']}</h1>
+<div class="subtitle" data-en="Secure Subscription Dashboard" data-fa="داشبورد اشتراک امن">Secure Subscription Dashboard</div>
 <div class="info-box">
 <div class="row"><span class="label" data-en="Status" data-fa="وضعیت">Status</span><span class="value" data-en="{status_en}" data-fa="{status_fa}">{status_en}</span></div>
-<div class="row"><span class="label" data-en="Data Usage" data-fa="مصرف داده">Data Usage</span><span class="value">{_fmt_bytes(used)} / {'∞' if limit == 0 else _fmt_bytes(limit)}</span></div>
+<div class="row"><span class="label" data-en="Data Usage" data-fa="مصرف داده">Data Usage</span><span class="value">{_fmt_bytes(used)} / {{'∞' if limit == 0 else _fmt_bytes(limit)}}</span></div>
 <div class="progress-bar-bg"><div class="progress-bar-fill"></div></div>
-<div class="progress-text">{usage_percent}% <span data-en="used" data-fa="مصرف شده">used</span></div>
-<div class="row"><span class="label" data-en="Expiration" data-fa="انقضا">Expiration</span><span class="value" data-en="{expiry_str_en}" data-fa="{expiry_str_fa}">{expiry_str_en}</span></div>
+<div class="progress-text" data-en="{{usage_percent}}% used" data-fa="{{usage_percent}}٪ مصرف شده">{usage_percent}% used</div>
+<div class="row"><span class="label" data-en="Expiration" data-fa="تاریخ انقضا">Expiration</span><span class="value">{expiry_str}</span></div>
 </div>
-
 <div class="qr">
-<img src="{qr_url}" alt="Scan to Import" width="180" height="180">
+<img src="{qr_url}" alt="Scan to Import" width="200" height="200">
 </div>
-
-<div class="btn-row">
-<button class="btn" onclick="copyToClip('{sub_url}', 'Subscription Link Copied! / لینک کپی شد!')">🔗 <span data-en="Copy Sub" data-fa="کپی لینک">Copy Sub</span></button>
-<button class="btn btn-outline" onclick="copyToClip('{vless_link}', 'VLESS Link Copied! / کانفیگ کپی شد!')">📋 <span data-en="Copy Config" data-fa="کپی کانفیگ">Copy Config</span></button>
+<button class="btn" onclick="copyToClip('{sub_url}', 'sub_copied')" data-en="🔗 Copy Subscription Link" data-fa="🔗 کپی لینک اشتراک">🔗 Copy Subscription Link</button>
+<button class="btn btn-outline" onclick="copyToClip('{vless_link}', 'vless_copied')" data-en="📋 Copy Single VLESS Link" data-fa="📋 کپی لینک VLESS">📋 Copy Single VLESS Link</button>
 </div>
-<button class="btn" style="background:linear-gradient(135deg, #00ff88, #00a85f); margin-bottom:0;" onclick="window.location.href='v2rayng://install-config?url={quote(sub_url)}'">🚀 <span data-en="Add to v2rayNG" data-fa="افزودن به v2rayNG">Add to v2rayNG</span></button>
-</div>
-
-<div id="toast">Copied!</div>
+<div id="toast" data-en="Copied!" data-fa="کپی شد!">Copied!</div>
 <script>
-let currentLang = 'en';
-function toggleLang() {{
-    currentLang = currentLang === 'en' ? 'fa' : 'en';
-    document.body.dir = currentLang === 'fa' ? 'rtl' : 'ltr';
+const translations = {{
+    'sub_copied': {{'en': 'Subscription Link Copied!', 'fa': 'لینک اشتراک کپی شد!'}},
+    'vless_copied': {{'en': 'VLESS Link Copied!', 'fa': 'لینک VLESS کپی شد!'}}
+}};
+function setLang(lang, btn) {{
+    document.querySelectorAll('.lang-btn-top').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.body.dir = lang === 'fa' ? 'rtl' : 'ltr';
     document.querySelectorAll('[data-en]').forEach(el => {{
-        el.textContent = el.getAttribute('data-' + currentLang);
+        el.textContent = el.getAttribute('data-' + lang);
     }});
 }}
-function copyToClip(text, msg) {{
+function copyToClip(text, msgKey) {{
     navigator.clipboard.writeText(text).then(() => {{
         const toast = document.getElementById('toast');
-        toast.innerText = msg;
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2500);
+        const lang = document.body.dir === 'rtl' ? 'fa' : 'en';
+        toast.innerText = translations[msgKey][lang];
+        toast.style.opacity = '1';
+        setTimeout(() => toast.style.opacity = '0', 2500);
     }});
 }}
 </script>
@@ -1625,12 +1684,14 @@ function copyToClip(text, msg) {{
 async def user_subscription(uid: str, request: Request):
     async with LINKS_LOCK:
         link = LINKS.get(uid)
-    if not link or not link["active"]:
-        raise HTTPException(status_code=404, detail="link not found or disabled")
-    link = dict(link)
+        if not link or not link["active"]:
+            raise HTTPException(status_code=404, detail="link not found or disabled")
+        link = dict(link)
+        
     expires = parse_expires_at(link.get("expires_at"))
     if expires and expires < datetime.now(timezone.utc):
         raise HTTPException(status_code=403, detail="link expired")
+        
     status = "active"
     if link.get("limit_bytes") > 0 and link["used_bytes"] >= link["limit_bytes"]:
         status = "quota_exceeded"
@@ -1641,20 +1702,23 @@ async def user_subscription(uid: str, request: Request):
         
     async with CUSTOM_ADDRESSES_LOCK:
         addresses = list(CUSTOM_ADDRESSES)
+        
     extra = {
         "custom_path": link.get("custom_path", ""),
         "custom_sni": link.get("custom_sni", ""),
         "custom_host": link.get("custom_host", ""),
-        "custom_fp": link.get("custom_fp", "randomized"),
-        "fragment": link.get("fragment", "10-20,1-1"),
+        "custom_fp": link.get("custom_fp", "chrome"),
+        "fragment": link.get("fragment", ""),
     }
     sub_content = generate_subscription_content(link, uid, addresses, extra, status)
     encoded = base64.b64encode(sub_content.encode()).decode()
+    
     total_bytes = link["limit_bytes"] if link["limit_bytes"] > 0 else UNLIMITED_QUOTA_BYTES
     expire_ts = int(expires.timestamp()) if expires else 0
+    
     headers = {
         "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="vroom-sub.txt"',
+        "Content-Disposition": 'attachment; filename="sub.txt"',
         "profile-update-interval": "6",
         "subscription-userinfo": f"upload={link['used_bytes']}; download=0; total={total_bytes}; expire={expire_ts}",
         "X-Status": status,
@@ -1672,6 +1736,7 @@ def generate_subscription_content(link: dict, uid: str, addresses: list, extra: 
     usage_str = f"{_fmt_bytes(used)} / ∞" if limit == 0 else f"{_fmt_bytes(used)} / {_fmt_bytes(limit)}"
     secs_left = seconds_until_expiry(link.get("expires_at"))
     expiry_str = "∞" if secs_left is None else ("Expired" if secs_left == 0 else f"{secs_left//86400} Days Left")
+    
     status_remark = ""
     if status == "quota_exceeded":
         status_remark = "🚫 Quota Exceeded"
@@ -1679,18 +1744,22 @@ def generate_subscription_content(link: dict, uid: str, addresses: list, extra: 
         status_remark = "⏰ Expired"
     elif status == "blocked":
         status_remark = "🔒 Blocked"
+        
     full_remark = f"📊 {usage_str} | ⏳ {expiry_str}"
     if status_remark:
         full_remark += f" | {status_remark}"
+        
     flag_emoji = code_to_flag(link.get("flag", ""))
     if flag_emoji:
         full_remark = flag_emoji + " " + full_remark
         
     status_node = generate_vless_link(uid, remark=full_remark, address="0.0.0.0", extra=extra)
-    server_node = generate_vless_link(uid, remark=f"{flag_emoji}VROOM Service" if flag_emoji else "VROOM Service", extra=extra)
+    server_node = generate_vless_link(uid, remark=f"{flag_emoji}This Service is Free" if flag_emoji else "This Service is Free", extra=extra)
     links = [status_node, server_node]
+    
     for i, addr in enumerate(addresses):
         links.append(generate_vless_link(uid, remark=f"{flag_emoji}VROOM-{link['label']}-IP{i+1}" if flag_emoji else f"VROOM-{link['label']}-IP{i+1}", address=addr, extra=extra))
+        
     return "\n".join(links)
 
 def _fmt_bytes(b: int) -> str:
@@ -1709,14 +1778,17 @@ async def scanner_ws(websocket: WebSocket):
         if not isinstance(items, list) or len(items) == 0:
             await websocket.close()
             return
+            
         max_ips = 256
         max_row = await db_fetchone("SELECT value FROM settings WHERE key='max_scan_ips'", "SELECT value FROM settings WHERE key='max_scan_ips'")
         if max_row and max_row["value"]:
             try: max_ips = int(max_row["value"])
             except: pass
+            
         if len(items) > max_ips:
             await websocket.send_json({"done": True, "error": f"Maximum {max_ips} IPs allowed."})
             return
+            
         timeout_str = "4"
         row = await db_fetchone("SELECT value FROM settings WHERE key='scanner_timeout'", "SELECT value FROM settings WHERE key='scanner_timeout'")
         if row and row["value"]:
@@ -1738,6 +1810,7 @@ async def scanner_ws(websocket: WebSocket):
                         return
                 except ValueError:
                     pass
+                    
                 try:
                     start = time.time()
                     try:
@@ -1757,6 +1830,7 @@ async def scanner_ws(websocket: WebSocket):
         tasks = [asyncio.create_task(scan_one(item)) for item in items]
         await asyncio.gather(*tasks)
         await websocket.send_json({"done": True})
+        
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -1787,6 +1861,7 @@ async def parse_vless_header(first_chunk: bytes):
     pos += 2
     addr_type = first_chunk[pos]
     pos += 1
+    
     if addr_type == 1:
         if len(first_chunk) < pos + 4:
             raise ValueError("Incomplete IPv4 address bytes")
@@ -1810,6 +1885,7 @@ async def parse_vless_header(first_chunk: bytes):
         address = ":".join(f"{addr_bytes[i]:02x}{addr_bytes[i+1]:02x}" for i in range(0, 16, 2))
     else:
         raise ValueError(f"Unsupported VLESS address type identifier: {addr_type}")
+        
     return command, address, port, first_chunk[pos:]
 
 async def check_quota(uid: str, extra_bytes: int) -> bool:
@@ -1841,24 +1917,29 @@ async def notify_telegram_event(event: str, label: str, uid: str):
     chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
     if not token_row or not chat_row or not token_row["value"] or not chat_row["value"]:
         return
+        
     lang = 'en'
     lang_row = await db_fetchone("SELECT value FROM settings WHERE key='telegram_lang'", "SELECT value FROM settings WHERE key='telegram_lang'")
     if lang_row and lang_row["value"] == 'fa':
         lang = 'fa'
+        
     templates_key = f'telegram_templates_{lang}'
     tmpl_row = await db_fetchone(f"SELECT value FROM settings WHERE key='{templates_key}'", f"SELECT value FROM settings WHERE key='{templates_key}'")
     templates = {}
     if tmpl_row and tmpl_row["value"]:
         try: templates = json.loads(tmpl_row["value"])
         except: pass
+        
     if lang == 'fa':
         default_msg = f"رویداد: {event} برای {label}"
     else:
         default_msg = f"Event: {event} for {label}"
+        
     msg = templates.get(event, default_msg)
     msg = msg.replace("{label}", label).replace("{uid}", uid)
     panel_url = f"https://{get_domain()}/panel"
     msg += f'\n<a href="{panel_url}">Open VROOM Panel</a>'
+    
     url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1872,20 +1953,24 @@ async def ws_to_tcp(websocket, writer, conn_id, link_uid):
             if msg["type"] == "websocket.disconnect": break
             data = msg.get("bytes") or (msg.get("text") or "").encode()
             if not data: continue
+            
             size = len(data)
             if not await check_quota(link_uid, size):
                 await websocket.close(code=1008, reason="quota exceeded")
                 log_event("Tunnel", f"Quota exceeded for {link_uid}")
                 break
+                
             stats["total_bytes"] += size; stats["upload_bytes"] += size
             async with connections_lock:
                 if conn_id in connections:
                     connections[conn_id]["bytes"] += size
+                    
             local_now = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
             hour = local_now.strftime("%Y-%m-%d %H:00")
             day = local_now.strftime("%Y-%m-%d")
             await add_traffic_to_buffer(hour, day, size)
             await add_usage(link_uid, size)
+            
             try:
                 writer.write(data); await writer.drain()
             except Exception: break
@@ -1904,20 +1989,24 @@ async def tcp_to_ws(websocket, reader, conn_id, link_uid):
         while True:
             data = await reader.read(RELAY_BUF)
             if not data: break
+            
             size = len(data)
             if not await check_quota(link_uid, size):
                 await websocket.close(code=1008, reason="quota exceeded")
                 log_event("Tunnel", f"Quota exceeded for {link_uid}")
                 break
+                
             stats["total_bytes"] += size; stats["download_bytes"] += size
             async with connections_lock:
                 if conn_id in connections:
                     connections[conn_id]["bytes"] += size
+                    
             local_now = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
             hour = local_now.strftime("%Y-%m-%d %H:00")
             day = local_now.strftime("%Y-%m-%d")
             await add_traffic_to_buffer(hour, day, size)
             await add_usage(link_uid, size)
+            
             try:
                 await websocket.send_bytes((b"\x00\x00" + data) if first else data)
                 first = False
@@ -1938,12 +2027,14 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
                 await websocket.close(code=1008, reason="not found or disabled")
                 log_event("Tunnel", f"Inactive/not found uuid {uuid}", ip=client_ip)
                 return
+                
             max_conn = link.get("max_connections", 0)
             expires = parse_expires_at(link.get("expires_at"))
             if expires and expires < datetime.now(timezone.utc):
                 await websocket.close(code=1008, reason="expired")
                 log_event("Tunnel", f"Expired uuid {uuid}", ip=client_ip)
                 return
+                
             if max_conn > 0:
                 if await count_connections_for_link(uuid) >= max_conn:
                     await websocket.close(code=1008, reason="connection limit")
@@ -1954,6 +2045,7 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
         if first_msg["type"] == "websocket.disconnect": return
         first_chunk = first_msg.get("bytes") or (first_msg.get("text") or "").encode()
         if not first_chunk: return
+        
         try: command, address, port, initial_payload = await parse_vless_header(first_chunk)
         except ValueError as e:
             logger.warning(f"Invalid VLESS header from {client_ip}: {e}")
@@ -1977,6 +2069,7 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
         reader, writer = await asyncio.wait_for(asyncio.open_connection(address, port), timeout=10.0)
         sock = writer.get_extra_info('socket')
         if sock: sock.setsockopt(6, 1, 1)
+        
         if initial_payload:
             try: writer.write(initial_payload); await writer.drain()
             except Exception: pass
@@ -1985,6 +2078,7 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
         down_task = asyncio.create_task(tcp_to_ws(websocket, reader, conn_id, uuid))
         done, pending = await asyncio.wait({up_task, down_task}, return_when=asyncio.FIRST_COMPLETED)
         for t in pending: t.cancel(); await t
+        
     except WebSocketDisconnect: pass
     except Exception as exc:
         stats["total_errors"] += 1
@@ -2012,7 +2106,7 @@ def get_client_ip(websocket: WebSocket) -> str:
     if websocket.client: return websocket.client.host
     return "unknown"
 
-# ── HTML Panel v2.0.0 ───────────────────────────────────────────────
+# ── HTML Panel v1.1.0 ───────────────────────────────────────────────
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2024,19 +2118,19 @@ PANEL_HTML = r"""<!DOCTYPE html>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
---primary:#00f2ea; --primary-dim:rgba(0,242,234,0.12);
---bg:#050505; --bg2:#0a0a0a; --bg3:#111111;
---surface:rgba(20,20,20,0.7); --surface2:rgba(30,30,30,0.8); --surface3:rgba(40,40,40,0.6);
---border:rgba(255,255,255,0.08); --border2:rgba(0,242,234,0.3);
---text:#f0f0f0; --text2:#b0b0b0; --text3:#707070;
---green:#00ff88; --red:#ff4d4d; --yellow:#ffcc00;
+--primary:#39ff14; --primary-dim:rgba(57,255,20,0.12);
+--bg:#0a0a0a; --bg2:#121212; --bg3:#1a1a1a;
+--surface:rgba(20,20,20,0.85); --surface2:rgba(30,30,30,0.9); --surface3:rgba(40,40,40,0.8);
+--border:rgba(57,255,20,0.08); --border2:rgba(57,255,20,0.2);
+--text:#e0e0e0; --text2:#a0a0a0; --text3:#707070;
+--green:#4ade80; --red:#f87171; --yellow:#fbbf24;
 --header-h:60px; --footer-h:50px;
 }
 body.light-mode {
---primary:#00a8a3; --primary-dim:rgba(0,168,163,0.15);
---bg:#f0fdfa; --bg2:#ffffff; --bg3:#e6fffa;
---surface:rgba(255,255,255,0.85); --surface2:rgba(255,255,255,0.9); --surface3:rgba(230,255,250,0.9);
---border:rgba(0,0,0,0.08); --border2:rgba(0,168,163,0.3);
+--primary:#2e7d32; --primary-dim:rgba(46,125,50,0.15);
+--bg:#f5fff5; --bg2:#ffffff; --bg3:#e8f5e9;
+--surface:rgba(255,255,255,0.85); --surface2:rgba(255,255,255,0.9); --surface3:rgba(245,255,245,0.9);
+--border:rgba(0,0,0,0.08); --border2:rgba(0,0,0,0.16);
 --text:#1a1a1a; --text2:#4a4a4a; --text3:#888;
 }
 body.blue-mode {
@@ -2087,10 +2181,10 @@ a{text-decoration:none;color:inherit;}
 .card-title{font-size:1rem;font-weight:600;color:var(--text);}
 .chart-container{height:200px;width:100%}
 .btn{font-family:inherit;font-size:0.9rem;font-weight:700;border-radius:10px;padding:6px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border:none;transition:all 0.2s;}
-.btn-primary{background:linear-gradient(135deg,#00f2ea,#00a8a3);color:#000;box-shadow:0 0 16px rgba(0,242,234,0.3)}
-.btn-primary:hover{filter:brightness(1.2);box-shadow:0 0 24px rgba(0,242,234,0.5)}
+.btn-primary{background:linear-gradient(135deg,#39ff14,#1a8c1a);color:#000;box-shadow:0 0 16px rgba(57,255,20,0.3)}
+.btn-primary:hover{filter:brightness(1.2);box-shadow:0 0 24px rgba(57,255,20,0.5)}
 .btn-outline{background:var(--surface3);color:var(--text);border:1px solid var(--border)}
-.btn-danger{background:rgba(255,77,77,0.1);color:var(--red);border:1px solid rgba(255,77,77,0.2)}
+.btn-danger{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
 .btn-sm{padding:5px 12px;font-size:0.8rem}
 .tbl-wrap{overflow-x:auto}
 .tbl{width:100%;border-collapse:collapse;table-layout:auto}
@@ -2105,8 +2199,8 @@ a{text-decoration:none;color:inherit;}
 .tbl.scanner-tbl th:first-child, .tbl.scanner-tbl td:first-child { width: auto; text-align: left; }
 .tag{display:inline-flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:800;text-transform:uppercase}
 .tag-vless{background:var(--primary-dim);color:var(--primary);border:1px solid var(--border)}
-.tag-on{background:rgba(0,255,136,0.1);color:var(--green);border:1px solid rgba(0,255,136,0.2)}
-.tag-off{background:rgba(255,77,77,0.1);color:var(--red);border:1px solid rgba(255,77,77,0.2)}
+.tag-on{background:rgba(74,222,128,0.1);color:var(--green);border:1px solid rgba(74,222,128,0.2)}
+.tag-off{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
 .pill{display:flex;align-items:center;gap:6px;font-size:0.8rem}
 .pill-used{color:var(--text);font-weight:600}
 .pill-bar{flex:1;height:4px;background:var(--border);border-radius:2px;min-width:30px}
@@ -2119,7 +2213,7 @@ a{text-decoration:none;color:inherit;}
 }
 .toggle{width:40px;height:22px;border-radius:11px;background:var(--surface3);position:relative;cursor:pointer;transition:all 0.3s;border:2px solid var(--border);flex-shrink:0}
 .toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:var(--text3);top:1px;left:2px;transition:all 0.3s}
-.toggle.on{background:var(--green);border-color:var(--green);box-shadow:0 0 12px rgba(0,255,136,0.4)}
+.toggle.on{background:var(--green);border-color:var(--green);box-shadow:0 0 12px rgba(74,222,128,0.4)}
 .toggle.on::after{left:20px;background:#fff}
 .sys-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
 .sys-fill{height:100%;border-radius:3px;transition:width 0.4s}
@@ -2132,10 +2226,10 @@ a{text-decoration:none;color:inherit;}
 .fi:focus,.fs:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-dim)}
 .act-btn{font-family:inherit;font-size:0.7rem;font-weight:700;padding:3px 6px;border-radius:6px;cursor:pointer;border:1px solid;transition:all 0.18s;display:inline-flex;align-items:center;gap:3px;background:transparent}
 .act-copy{color:var(--primary);border-color:var(--border)}
-.act-sub{color:var(--green);border-color:rgba(0,255,136,0.2)}
+.act-sub{color:var(--green);border-color:rgba(74,222,128,0.2)}
 .act-qr{color:#a78bfa;border-color:rgba(167,139,250,0.2)}
-.act-edit{color:var(--yellow);border-color:rgba(255,204,0,0.2)}
-.act-del{color:var(--red);border-color:rgba(255,77,77,0.2)}
+.act-edit{color:var(--yellow);border-color:rgba(251,191,36,0.2)}
+.act-del{color:var(--red);border-color:rgba(248,113,113,0.2)}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--surface);color:var(--text);border:1px solid var(--border2);border-radius:14px;padding:14px 28px;font-size:0.9rem;font-weight:600;opacity:0;transition:all 0.3s;z-index:999;backdrop-filter:blur(24px);box-shadow:0 0 30px var(--primary-dim)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .mo{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px)}
@@ -2147,6 +2241,8 @@ a{text-decoration:none;color:inherit;}
 .qr-box img{max-width:180px;border-radius:12px;border:3px solid var(--border);box-shadow:0 0 15px var(--primary-dim)}
 .footer{height:var(--footer-h);display:flex;align-items:center;justify-content:center;font-size:0.8rem;color:var(--text3);border-top:1px solid var(--border);background:var(--surface);backdrop-filter:blur(10px);margin-top:auto;}
 .footer-inner { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; }
+.footer-inner a { color: var(--primary); text-decoration: none; font-weight: 600; }
+.footer-inner a:hover { text-shadow: 0 0 8px var(--primary); }
 textarea.fi{resize:vertical;min-height:90px;}
 .chip{padding:6px 12px;border-radius:8px;font-size:0.8rem;font-weight:700;color:var(--text3);cursor:pointer;border:none;background:none;font-family:inherit;transition:all 0.18s;}
 .chip.active{background:var(--primary);color:#000;}
@@ -2169,7 +2265,8 @@ textarea.fi{resize:vertical;min-height:90px;}
 .status-cards-grid {display: grid;grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));gap: 10px;margin-top: 10px;}
 .status-glass-card {padding: 14px;border-radius: 12px;text-align: center;cursor: pointer;font-weight: 700;transition: all 0.3s;user-select: none;display: flex;flex-direction: column;align-items: center;gap: 6px;font-size: 0.8rem;}
 .status-glass-card.inactive {background: rgba(255, 255, 255, 0.02);border: 1px solid var(--border);color: var(--text3);}
-.status-glass-card.active {background: rgba(0, 242, 234, 0.1);border: 1px solid rgba(0, 242, 234, 0.3);color: var(--primary);box-shadow: 0 0 12px var(--primary-dim);}
+.status-glass-card.active {background: rgba(57, 255, 20, 0.1);border: 1px solid rgba(57, 255, 20, 0.3);color: var(--primary);box-shadow: 0 0 12px var(--primary-dim);}
+.railway-hl {background: rgba(168, 85, 247, 0.15) !important;color: #d8b4fe !important;border: 1px solid #a855f7 !important;font-weight: 800;box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);}
 @media(max-width:768px){
 .header .header-nav{display:none;}
 .mobile-nav{display:block;}
@@ -2201,7 +2298,7 @@ textarea.fi{resize:vertical;min-height:90px;}
 <text x="90" y="58" font-family="'Orbitron',sans-serif" font-size="40" font-weight="900" fill="var(--primary)" text-anchor="middle">VROOM</text>
 </svg>
 <div style="font-family:'Orbitron',sans-serif;font-size:1.5rem;font-weight:900;color:var(--primary);margin-top:12px;display:flex;align-items:center;justify-content:center;gap:8px;">
-VROOM Panel <span style="font-size:0.8rem; font-family:'Inter'; color:#000; background:var(--primary); padding:2px 6px; border-radius:4px;">V 2.0.0</span>
+VROOM Panel <span style="font-size:0.8rem; font-family:'Inter'; color:var(--bg); background:var(--primary); padding:2px 6px; border-radius:4px;">V 1.1.0</span>
 </div>
 <div style="font-size:1rem;color:var(--text3);margin-top:8px;" data-en="Enter your password" data-fa="رمز عبور را وارد کنید">Enter your password</div>
 <div id="login-custom-message" style="margin-top:20px; text-align:center; color:var(--text3); font-size:0.9rem;"></div>
@@ -2216,7 +2313,7 @@ VROOM Panel <span style="font-size:0.8rem; font-family:'Inter'; color:#000; back
 <header class="header">
 <div class="header-inner">
 <div style="display:flex;align-items:center;gap:16px;">
-<span class="logo">VROOM</span><span class="version-tag">v2.0.0</span>
+<span class="logo">VROOM</span><span class="version-tag">v1.1.0</span>
 <span id="panel-clock" style="font-weight:600;color:var(--primary);margin-left:8px;font-size:0.9rem;"></span>
 <nav class="header-nav" id="mainNav">
 <button class="nav-link active" data-page="dashboard">📊 <span data-en="Dashboard" data-fa="داشبورد">Dashboard</span></button>
@@ -2316,9 +2413,10 @@ example.com"></textarea></div>
 </section>
 <section class="page" id="page-ipscanner">
 <div class="page-header"><div class="page-title" data-en="IP Scanner" data-fa="اسکنر آی‌پی">IP Scanner</div></div>
-<div style="background: rgba(255,204,0,0.1); border: 1px solid rgba(255,204,0,0.3); color: var(--yellow); padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 0.8rem; line-height: 1.4;">
+<div style="background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); color: var(--yellow); padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 0.8rem; line-height: 1.4;">
 <strong data-en="⚠️ Safe Scan Notice:" data-fa="⚠️ هشدار اسکن ایمن:">⚠️ Safe Scan Notice:</strong><br>
-<span data-en="Scans are strictly limited to 256 IPs at a time to prevent hosting provider bans." data-fa="اسکن‌ها به‌طور سخت‌گیرانه‌ای به حداکثر ۲۵۶ آی‌پی در هر بار محدود شده‌اند تا از مسدود شدن اکانت هاستینگ جلوگیری شود."></span>
+<span data-en="To prevent your hosting provider (like Railway/Render) from banning your account due to abuse detection, scans are strictly limited to 256 IPs at a time. The scanning process is intentionally slowed down." data-fa="برای جلوگیری از مسدود شدن اکانت هاستینگ شما (مثل Railway/Render) به دلیل تشخیص اسپم، اسکن‌ها به‌طور سخت‌گیرانه‌ای به حداکثر ۲۵۶ آی‌پی در هر بار محدود شده‌اند. روند اسکن به‌طور عمدی کندتر شده تا امنیت سرور حفظ شود."></span>
+<div id="railway-note" style="display:none; margin-top:8px; color: #d8b4fe;"><span data-en="ℹ️ Note: For Railway provider, only Railway-related IPs will work." data-fa="نکته: در ارائه دهنده railway فقط آیپی های مربوط به آن کار خواهد کرد."></span></div>
 </div>
 <div class="card">
 <div class="fg"><label class="fl" data-en="Provider" data-fa="ارائه‌دهنده">Provider</label><div id="provider-btns" class="pill-group"></div></div>
@@ -2383,7 +2481,7 @@ example.com
 <textarea class="fi" id="tg-templates-en" rows="4">{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}</textarea>
 </div>
 <div class="fg"><label class="fl">Custom Templates (FA)</label>
-<textarea class="fi" id="tg-templates-fa" rows="4">{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود به پنل VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}</textarea>
+<textarea class="fi" id="tg-templates-fa" rows="4">{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}</textarea>
 </div>
 <div style="margin:6px 0;">
 <button class="btn btn-outline btn-sm" onclick="previewTemplate()">Preview</button>
@@ -2504,7 +2602,7 @@ example.com
 <div class="mo-box">
 <button class="mo-close" onclick="document.getElementById('mo-add').classList.remove('show')">✕</button>
 <div class="mo-title" data-en="Create Inbound" data-fa="ایجاد اینباند">Create Inbound</div>
-<div class="fg"><label class="fl" data-en="Name" data-fa="نام">Name</label><input class="fi" id="nl" placeholder="VROOM Free" maxlength="60"></div>
+<div class="fg"><label class="fl" data-en="Name" data-fa="نام">Name</label><input class="fi" id="nl" placeholder="This Server is Free" maxlength="60"></div>
 <div class="fg"><label class="fl" data-en="Flag / Country" data-fa="پرچم / کشور">Flag / Country</label>
 <select class="fs" id="flag-select-create" onchange="applyFlagCreate()">
 <option value="">None</option>
@@ -2532,14 +2630,14 @@ example.com
 <div class="fg"><label class="fl">Path</label><input class="fi" id="ap" placeholder="/ws/{uid}"></div>
 <div class="fg"><label class="fl">SNI</label><input class="fi" id="asni" placeholder="example.com"></div>
 <div class="fg"><label class="fl">Host</label><input class="fi" id="ahost" placeholder="example.com"></div>
-<div class="fg"><label class="fl">Fingerprint</label><input class="fi" id="afp" placeholder="randomized"></div>
-<div class="fg"><label class="fl">Fragment</label><input class="fi" id="afrag" placeholder="e.g. 10-20,1-1"></div>
+<div class="fg"><label class="fl">Fingerprint</label><input class="fi" id="afp" placeholder="chrome"></div>
+<div class="fg"><label class="fl">Fragment</label><input class="fi" id="afrag" placeholder="e.g. 1000-2000"></div>
 </div>
 </div>
 <div class="fg"><label class="fl" data-en="Traffic Limit (GB)" data-fa="محدودیت ترافیک (گیگابایت)">Traffic Limit (GB)</label><input class="fi" type="number" id="nv" min="0" step="0.1" value="0" placeholder="0 = Unlimited"></div>
 <div class="fg"><label class="fl" data-en="Max Connections" data-fa="حداکثر اتصالات">Max Connections</label><input class="fi" type="number" id="nc" min="0" value="0" placeholder="0 = Unlimited"></div>
 <div class="fg"><label class="fl" data-en="Validity (Days)" data-fa="اعتبار (روز)">Validity (Days)</label><input class="fi" type="number" id="nd" min="0" value="0" placeholder="0 = Unlimited"></div>
-<div class="fg"><label class="fl" data-en="Color" data-fa="رنگ">Color</label><input type="color" id="alink-color" value="#00f2ea"></div>
+<div class="fg"><label class="fl" data-en="Color" data-fa="رنگ">Color</label><input type="color" id="alink-color" value="#39ff14"></div>
 <div style="display:flex;gap:6px;margin-top:10px;"><button class="btn btn-primary" onclick="createLink()" style="flex:1;" data-en="Create" data-fa="ایجاد">Create</button><button class="btn btn-outline" onclick="document.getElementById('mo-add').classList.remove('show')" data-en="Cancel" data-fa="انصراف">Cancel</button></div>
 </div>
 </div>
@@ -2583,7 +2681,7 @@ example.com
 <div class="fg"><label class="fl" data-en="Traffic Limit (GB)" data-fa="محدودیت ترافیک (گیگابایت)">Traffic Limit (GB)</label><input class="fi" type="number" id="el" min="0" step="0.1" placeholder="0 = Unlimited"></div>
 <div class="fg"><label class="fl" data-en="Max Connections" data-fa="حداکثر اتصالات">Max Connections</label><input class="fi" type="number" id="ec" min="0" placeholder="0 = Unlimited"></div>
 <div class="fg"><label class="fl" data-en="Validity (Days)" data-fa="اعتبار (روز)">Validity (Days)</label><input class="fi" type="number" id="ed" min="0" placeholder="0 = Unlimited"></div>
-<div class="fg"><label class="fl" data-en="Color" data-fa="رنگ">Color</label><input type="color" id="e-color" value="#00f2ea"></div>
+<div class="fg"><label class="fl" data-en="Color" data-fa="رنگ">Color</label><input type="color" id="e-color" value="#39ff14"></div>
 <div style="display:flex;gap:6px;margin-top:10px;"><button class="btn btn-primary" onclick="saveEdit()" style="flex:1;" data-en="Save" data-fa="ذخیره">Save</button><button class="btn btn-danger btn-sm" onclick="resetTraf()" data-en="Reset Traffic" data-fa="بازنشانی ترافیک">Reset Traffic</button><button class="btn btn-outline" onclick="document.getElementById('mo-edit').classList.remove('show')" data-en="Cancel" data-fa="انصراف">Cancel</button></div>
 </div>
 </div>
@@ -2643,35 +2741,35 @@ let selectedUids = new Set();
 let selectedAddrIndices = new Set();
 let uploadSpeedAvg = 0, downloadSpeedAvg = 0;
 const footerTexts = {
-en: '© 2024 VROOM Panel. All rights reserved.',
-fa: '© ۲۰۲۴ پنل VROOM. تمامی حقوق محفوظ است.'
+en: 'Powered by VROOM',
+fa: 'قدرت گرفته از VROOM'
 };
 const dnsRanges = new Set();
 ['1.1.1.1','1.0.0.1','9.9.9.9','149.112.112.112','208.67.222.222','208.67.220.220'].forEach(ip=>dnsRanges.add(ip));
 const providerIPs = {"arvancloud":{"ipv4":["185.143.232.0/22","188.229.116.16/30","94.101.182.0/27","2.144.3.128/28","37.32.16.0/27","37.32.17.0/27","37.32.18.0/27","37.32.19.0/27","185.215.232.0/22","178.131.120.48/28","185.143.235.0/24"]},"cloudflare":{"ipv4":["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22"]},"fastly":{"ipv4":["23.235.32.0/20","43.249.72.0/22","103.244.50.0/24","103.245.222.0/23","103.245.224.0/24","104.156.80.0/20","140.248.64.0/18","140.248.128.0/17","146.75.0.0/17","151.101.0.0/16","157.52.64.0/18","167.82.0.0/17","167.82.128.0/20","167.82.160.0/20","167.82.224.0/20","172.111.64.0/18","185.31.16.0/22","199.27.72.0/21","199.232.0.0/16"]},"Google":{"ipv4":["34.0.0.0/15","34.2.0.0/16","34.64.0.0/10","34.128.0.0/10","35.216.0.0/14","104.132.0.0/14"]},"Google_Cloud":{"ipv4":["34.0.228.0/22","34.0.232.0/23","34.0.235.0/24"]},"Microsoft":{"ipv4":["20.192.0.0/10","40.80.0.0/14","40.92.0.0/14","52.100.0.0/14","172.128.0.0/10","172.160.0.0/11"]},"Microsoft_Azure":{"ipv4":["4.152.0.0/15","4.154.0.0/15","4.156.0.0/15","4.158.0.0/15","13.68.0.0/14","13.80.0.0/15","13.82.0.0/15","13.84.0.0/15","51.140.0.0/14","108.142.0.0/15","172.166.0.0/15","172.168.0.0/15","172.176.0.0/15","172.180.0.0/15","172.184.0.0/15","172.190.0.0/15"]},"Amazon_AWS":{"ipv4":["18.128.0.0/9","3.5.180.0/22"]},"Oracle_Cloud":{"ipv4":["92.0.0.0/13","129.144.0.0/12"]},"IBM_Cloud":{"ipv4":["50.22.0.0/21","119.81.0.0/16","144.69.0.0/16","150.240.0.0/16","174.133.0.0/16"]},"Alibaba_Cloud":{"ipv4":["8.25.82.0/24","8.38.121.0/24","42.120.70.0/23","42.120.133.0/20","42.156.128.0/21","47.90.198.0/24","59.82.0.0/24","59.82.1.0/24"]},"Tencent_Cloud":{"ipv4":["1.12.0.0/14","49.232.0.0/14","111.229.0.0/18","124.220.0.0/14","162.14.0.0/16"]},"Akamai":{"ipv4":["2.16.30.0/23","2.16.32.0/23","2.16.38.0/23","23.4.92.0/24","23.52.140.0/24","23.56.32.0/19","23.192.0.0/11","96.7.130.0/23","184.24.0.0/13","184.28.102.0/23","184.28.236.0/23","209.200.128.0/17"]},"DigitalOcean":{"ipv4":["45.55.128.0/18","45.55.192.0/18","46.101.0.0/18","46.101.128.0/17","95.85.0.0/18","104.131.0.0/18","104.131.64.0/18","104.236.0.0/18","104.236.64.0/18","104.236.128.0/18","104.236.192.0/18","107.170.0.0/17","107.170.192.0/18","128.199.64.0/18","128.199.128.0/18","162.243.0.0/17","188.226.128.0/17"]},"Hetzner":{"ipv4":["5.9.0.0/16","5.75.128.0/17","5.78.0.0/21","5.161.8.0/21","136.243.0.0/16","213.239.224.0/24"]},"Linode":{"ipv4":["23.92.16.0/20","172.232.0.0/14","176.58.120.0/21","192.46.208.0/20","192.155.82.117/32"]},"Vultr":{"ipv4":["65.20.64.0/19","108.61.170.0/23","149.28.132.0/23","149.28.192.189/32"]},"OVHcloud":{"ipv4":["5.39.0.0/17","5.135.0.0/16","54.36.0.0/14","91.121.0.0/19","178.33.128.128/25","198.49.103.0/24"]},"Railway":{"ipv4":["69.46.46.0/24","208.77.244.0/24","208.77.245.0/24","208.77.246.0/24","208.77.247.0/24","208.77.248.0/24"]},"GitHub":{"ipv4":["140.82.112.0/20","143.55.64.0/20","192.30.252.0/22"]},"Facebook_Meta":{"ipv4":["31.13.24.0/21","57.141.0.0/14","66.220.144.0/20","69.63.184.0/21","157.240.0.0/16","163.70.128.0/17"]},"Twitter_X":{"ipv4":["8.25.194.0/23","8.25.196.0/23","64.63.0.0/18","69.12.56.0/21","69.195.160.0/19","104.244.40.0/21","192.48.236.0/23","192.133.78.0/23","199.16.156.0/23","202.160.131.0/24","209.237.192.0/19"]},"LinkedIn":{"ipv4":["45.42.64.0/22","103.20.92.0/22","108.174.0.0/20","128.241.35.0/24","128.242.95.0/24","199.101.160.0/22"]},"Dropbox":{"ipv4":["45.58.64.0/23","45.58.66.0/23","64.112.13.0/24","108.160.160.0/20","162.125.0.0/16","192.189.200.0/23","199.47.216.0/22"]},"Salesforce":{"ipv4":["13.108.0.0/14","13.111.0.0/16","66.231.80.0/20","85.222.128.0/19","101.53.160.0/19","136.147.208.0/20","140.190.64.0/16","145.224.128.0/17"]},"SAP":{"ipv4":["45.86.152.0/24","103.109.18.0/24","103.109.19.0/24","130.214.0.0/23","130.214.2.0/23","130.214.20.0/23","130.214.32.0/23","204.79.147.0/24"]},"Adobe":{"ipv4":["2.26.170.0/24","66.235.128.0/17","82.47.145.0/24","92.113.252.0/24"]},"Apple":{"ipv4":["17.0.0.0/8"]},"Spotify":{"ipv4":["23.92.96.0/20","78.31.8.0/22","193.182.8.0/21","193.235.232.0/24"]},"Netflix":{"ipv4":["23.246.0.0/18","37.77.184.0/21","45.57.0.0/17","64.120.128.0/17","66.197.128.0/17","69.53.224.0/19","198.45.48.0/20"]},"Stripe":{"ipv4":["8.14.0.0/24","8.21.168.0/24","8.39.50.0/24","8.39.157.0/24","139.45.128.0/18","139.45.168.0/24","139.45.170.0/24","139.45.180.0/24","194.34.152.0/22"]},"Twilio":{"ipv4":["3.25.42.128/25","3.26.81.96/27","3.80.20.0/25","3.251.214.32/27","34.203.250.0/23","54.172.60.0/23","67.213.136.0/23","185.187.132.0/23","208.78.112.0/22"]},"SendGrid":{"ipv4":["50.31.32.0/19","134.128.64.0/18","149.72.1.0/24","149.72.2.0/23","149.72.4.0/22","149.72.8.0/22","167.89.0.0/17","168.245.0.0/17","208.117.48.0/20"]}};
 const OPERATIONAL_PROFILES = {
-"instagram": { sni: "www.instagram.com", host: "www.instagram.com", path: "/graphql", fp: "randomized" },
-"youtube": { sni: "www.youtube.com", host: "www.youtube.com", path: "/youtubei/v1/image", fp: "randomized" },
-"twitter": { sni: "twitter.com", host: "twitter.com", path: "/ws", fp: "randomized" },
-"tiktok": { sni: "www.tiktok.com", host: "www.tiktok.com", path: "/ws", fp: "randomized" },
+"instagram": { sni: "www.instagram.com", host: "www.instagram.com", path: "/graphql", fp: "chrome" },
+"youtube": { sni: "www.youtube.com", host: "www.youtube.com", path: "/youtubei/v1/image", fp: "chrome" },
+"twitter": { sni: "twitter.com", host: "twitter.com", path: "/ws", fp: "chrome" },
+"tiktok": { sni: "www.tiktok.com", host: "www.tiktok.com", path: "/ws", fp: "chrome" },
 "whatsapp": { sni: "web.whatsapp.com", host: "web.whatsapp.com", path: "/ws/chat/v4", fp: "safari" },
-"telegram": { sni: "telegram.org", host: "telegram.org", path: "/ws", fp: "randomized" },
-"netflix": { sni: "www.netflix.com", host: "www.netflix.com", path: "/ws", fp: "randomized" },
-"spotify": { sni: "www.spotify.com", host: "www.spotify.com", path: "/ws", fp: "randomized" },
-"google": { sni: "www.google.com", host: "www.google.com", path: "/ws", fp: "randomized" },
-"default": { sni: "", host: "", path: "", fp: "randomized" }
+"telegram": { sni: "telegram.org", host: "telegram.org", path: "/ws", fp: "chrome" },
+"netflix": { sni: "www.netflix.com", host: "www.netflix.com", path: "/ws", fp: "chrome" },
+"spotify": { sni: "www.spotify.com", host: "www.spotify.com", path: "/ws", fp: "chrome" },
+"google": { sni: "www.google.com", host: "www.google.com", path: "/ws", fp: "chrome" },
+"default": { sni: "", host: "", path: "", fp: "chrome" }
 };
 const profiles = {
-default: {path:'',sni:'',host:'',fp:'randomized'},
-youtube: {path:'/youtubei/v1/image',sni:'www.youtube.com',host:'www.youtube.com',fp:'randomized'},
-instagram: {path:'/graphql',sni:'www.instagram.com',host:'www.instagram.com',fp:'randomized'},
-twitter: {path:'/ws',sni:'twitter.com',host:'twitter.com',fp:'randomized'},
-tiktok: {path:'/ws',sni:'www.tiktok.com',host:'www.tiktok.com',fp:'randomized'},
+default: {path:'',sni:'',host:'',fp:'chrome'},
+youtube: {path:'/youtubei/v1/image',sni:'www.youtube.com',host:'www.youtube.com',fp:'chrome'},
+instagram: {path:'/graphql',sni:'www.instagram.com',host:'www.instagram.com',fp:'chrome'},
+twitter: {path:'/ws',sni:'twitter.com',host:'twitter.com',fp:'chrome'},
+tiktok: {path:'/ws',sni:'www.tiktok.com',host:'www.tiktok.com',fp:'chrome'},
 whatsapp: {path:'/ws/chat/v4',sni:'web.whatsapp.com',host:'web.whatsapp.com',fp:'safari'},
-telegram: {path:'/ws',sni:'telegram.org',host:'telegram.org',fp:'randomized'},
-netflix: {path:'/ws',sni:'www.netflix.com',host:'www.netflix.com',fp:'randomized'},
-spotify: {path:'/ws',sni:'www.spotify.com',host:'www.spotify.com',fp:'randomized'},
-google: {path:'/ws',sni:'www.google.com',host:'www.google.com',fp:'randomized'}
+telegram: {path:'/ws',sni:'telegram.org',host:'telegram.org',fp:'chrome'},
+netflix: {path:'/ws',sni:'www.netflix.com',host:'www.netflix.com',fp:'chrome'},
+spotify: {path:'/ws',sni:'www.spotify.com',host:'www.spotify.com',fp:'chrome'},
+google: {path:'/ws',sni:'www.google.com',host:'www.google.com',fp:'chrome'}
 };
 function applyProfile() {
 const p = $m('eres-profile').value;
@@ -2681,7 +2779,7 @@ if (pr) {
 $m('ep').value = pr.path || '';
 $m('esni').value = pr.sni || '';
 $m('ehost').value = pr.host || '';
-$m('efp').value = pr.fp || 'randomized';
+$m('efp').value = pr.fp || 'chrome';
 }
 }
 function applyProfileCreate() {
@@ -2692,7 +2790,7 @@ if (pr) {
 $m('ap').value = pr.path || '';
 $m('asni').value = pr.sni || '';
 $m('ahost').value = pr.host || '';
-$m('afp').value = pr.fp || 'randomized';
+$m('afp').value = pr.fp || 'chrome';
 }
 }
 function applyFlagCreate() {
@@ -2931,7 +3029,7 @@ return`<tr>
 <div style="display:flex; flex-direction:column; gap:6px; align-items:center;">
 <button class="toggle ${l.active?'on':''}" data-uid="${l.uuid}" onclick="togLink(this)"></button>
 <div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center;">
-${l.label === 'VROOM Free' ? `
+${l.label === 'This Server is Free' ? `
 <button class="act-btn act-copy" title="${t('copy')}" onclick="cpLink('${esc(l.vless_link)}')">📋</button>
 <button class="act-btn act-sub" title="${t('sub')}" onclick="cpSub('${l.uuid}')">🔗</button>
 <button class="act-btn act-qr" title="${t('qr')}" onclick="showQR('${esc(l.vless_link)}')">📷</button>
@@ -2978,16 +3076,16 @@ async function togLink(el){const uid=el.dataset.uid,l=allLinks.find(x=>x.uuid===
 async function randomInbound(){const names=['User','Client','Node','Peer'];const n=names[Math.floor(Math.random()*names.length)]+'-'+Math.floor(Math.random()*1000);try{await fetch('/api/links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:n,limit_value:0})});toast(`Created ${n}`);loadLinks();loadStats();}catch{toast('Error',true);}}
 function showAddMo(){$m('mo-add').classList.add('show');}
 async function createLink(){
-const label=$m('nl').value.trim()||'VROOM Free';
+const label=$m('nl').value.trim()||'This Server is Free';
 const uuid=$m('auuid').value.trim();
 const v=parseFloat($m('nv').value)||0,mc=parseInt($m('nc').value)||0,days=parseInt($m('nd').value)||0;
 const flagCode = $m('flag-code-create').value || '';
-const fragment = $m('afrag')?.value?.trim() || '10-20,1-1';
+const fragment = $m('afrag')?.value?.trim() || '';
 const body={
 label,uuid,limit_value:v,limit_unit:'GB',max_connections:mc,days_valid:days,
 custom_path:$m('ap').value.trim(),custom_sni:$m('asni').value.trim(),
-custom_host:$m('ahost').value.trim(),custom_fp:$m('afp').value.trim()||'randomized',
-color:$m('alink-color')?.value||'#00f2ea', flag: flagCode, fragment: fragment
+custom_host:$m('ahost').value.trim(),custom_fp:$m('afp').value.trim(),
+color:$m('alink-color')?.value||'#39ff14', flag: flagCode, fragment: fragment
 };
 try{
 await fetch('/api/links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -2998,9 +3096,9 @@ function showEditMo(uid){
 const l=allLinks.find(x=>x.uuid===uid); if(!l)return;
 $m('eu').value=uid; $m('euuid').value=l.uuid; $m('en2').value=l.label;
 $m('el').value=l.limit_bytes>0?(l.limit_bytes/1073741824):''; $m('ec').value=l.max_connections||''; $m('ed').value='';
-$m('ep').value=l.custom_path||''; $m('esni').value=l.custom_sni||''; $m('ehost').value=l.custom_host||''; $m('efp').value=l.custom_fp||'randomized';
-$m('efrag').value=l.fragment||'10-20,1-1';
-$m('e-color').value=l.color||'#00f2ea';
+$m('ep').value=l.custom_path||''; $m('esni').value=l.custom_sni||''; $m('ehost').value=l.custom_host||''; $m('efp').value=l.custom_fp||'chrome';
+$m('efrag').value=l.fragment||'';
+$m('e-color').value=l.color||'#39ff14';
 const flag = l.flag || '';
 $m('flag-code-edit').value = flag;
 const sel = $m('flag-select-edit');
@@ -3020,11 +3118,11 @@ $m('et').textContent=(lang==='fa'?'ویرایش: ':'EDIT: ')+l.label; $m('mo-edi
 async function saveEdit(){
 const uid=$m('eu').value,v=parseFloat($m('el').value)||0,mc=parseInt($m('ec').value)||0,days=parseInt($m('ed').value)||0;
 const flagCode = $m('flag-code-edit').value || '';
-const fragment = $m('efrag').value.trim() || '10-20,1-1';
+const fragment = $m('efrag').value.trim() || '';
 const body={
 limit_value:v,limit_unit:'GB',max_connections:mc,label:$m('en2').value.trim(),
 custom_path:$m('ep').value.trim(),custom_sni:$m('esni').value.trim(),
-custom_host:$m('ehost').value.trim(),custom_fp:$m('efp').value.trim()||'randomized',
+custom_host:$m('ehost').value.trim(),custom_fp:$m('efp').value.trim(),
 color:$m('e-color').value, flag: flagCode, fragment: fragment
 };
 if(days)body.days_valid=days;
@@ -3113,16 +3211,16 @@ function initChart(){
 const ctx=$m('tc'); if(!ctx||tChart)return;
 tChart=new Chart(ctx,{
 type:'bar',
-data:{labels:[],datasets:[{label:'MB',data:[],backgroundColor:'rgba(0,242,234,0.6)',borderColor:'#00f2ea',borderWidth:1,barPercentage:0.7,categoryPercentage:0.9}]},
+data:{labels:[],datasets:[{label:'MB',data:[],backgroundColor:'rgba(57,255,20,0.6)',borderColor:'#39ff14',borderWidth:1,barPercentage:0.7,categoryPercentage:0.9}]},
 options:{
 responsive:true, maintainAspectRatio:false,
 plugins:{legend:{display:false}},
-scales:{x:{ticks:{color:'rgba(0,242,234,0.3)',maxRotation:45}},y:{ticks:{color:'rgba(0,242,234,0.3)',callback:v=>v+' MB'},beginAtZero:true}}
+scales:{x:{ticks:{color:'rgba(57,255,20,0.3)',maxRotation:45}},y:{ticks:{color:'rgba(57,255,20,0.3)',callback:v=>v+' MB'},beginAtZero:true}}
 }
 });
 updChartColors();
 }
-function updChartColors(){if(!tChart)return;const col=theme==='light'?'#000':'rgba(0,242,234,0.4)';tChart.options.scales.x.ticks.color=col;tChart.options.scales.y.ticks.color=col;tChart.update();}
+function updChartColors(){if(!tChart)return;const col=theme==='light'?'#000':'rgba(57,255,20,0.4)';tChart.options.scales.x.ticks.color=col;tChart.options.scales.y.ticks.color=col;tChart.update();}
 function getPanelTime(isoString){const d=new Date(isoString);if(!isNaN(d)){d.setMinutes(d.getMinutes()+d.getTimezoneOffset()+timezoneOffset*60);}return d;}
 function getLocalTimeString(){const d=new Date();d.setMinutes(d.getMinutes()+d.getTimezoneOffset()+timezoneOffset*60);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;}
 function updChart(){
@@ -3139,11 +3237,11 @@ tChart.update();
 }
 let doughnutChart=null;
 function initDoughnutChart(){const ctx=$m('doughnut-chart');if(!ctx||doughnutChart)return;doughnutChart=new Chart(ctx,{type:'doughnut',data:{labels:[],datasets:[{data:[],backgroundColor:[]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.raw>=1e9?(ctx.raw/1e9).toFixed(1)+' GB':(ctx.raw/1e6).toFixed(1)+' MB'}`}}}}});}
-function updDoughnutChart(){if(!doughnutChart)return;const labels=[],data=[],colors=[];allLinks.filter(l=>l.used_bytes>0).forEach(l=>{labels.push(l.label);data.push(l.used_bytes);colors.push(l.color||'#00f2ea');});doughnutChart.data.labels=labels;doughnutChart.data.datasets[0].data=data;doughnutChart.data.datasets[0].backgroundColor=colors;doughnutChart.update();}
+function updDoughnutChart(){if(!doughnutChart)return;const labels=[],data=[],colors=[];allLinks.filter(l=>l.used_bytes>0).forEach(l=>{labels.push(l.label);data.push(l.used_bytes);colors.push(l.color||'#39ff14');});doughnutChart.data.labels=labels;doughnutChart.data.datasets[0].data=data;doughnutChart.data.datasets[0].backgroundColor=colors;doughnutChart.update();}
 let speedChart=null,speedHistory=[];
 function initSpeedChart(){
 const ctx=$m('speed-chart');if(!ctx||speedChart)return;
-speedChart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[{label:'DL',borderColor:'#00ff88',data:[],tension:0.2},{label:'UL',borderColor:'#ff4d4d',data:[],tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+formatSpeed(ctx.raw)}}},scales:{y:{max:undefined,beginAtZero:true,ticks:{callback:v=>formatSpeed(v)}}}}});
+speedChart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[{label:'DL',borderColor:'#4ade80',data:[],tension:0.2},{label:'UL',borderColor:'#f87171',data:[],tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+formatSpeed(ctx.raw)}}},scales:{y:{max:undefined,beginAtZero:true,ticks:{callback:v=>formatSpeed(v)}}}}});
 }
 function updSpeedChart(up,down){
 if(!speedChart)return;
@@ -3169,17 +3267,18 @@ async function delAddr(i){if(!confirm('Delete?'))return;try{await fetch('/api/ad
 async function exportLinks(){try{const r=await fetch('/api/export-links');const data=await r.json();const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='vroom-links.json';a.click();}catch{toast('Export failed',true);}}
 async function importLinks(input){const file=input.files[0];if(!file)return;try{const text=await file.text();const data=JSON.parse(text);const r=await fetch('/api/import-links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const res=await r.json();toast(`Imported ${res.imported} links`);loadLinks();loadStats();}catch{toast('Import failed',true);}input.value='';}
 let currentProvider=null;
-function buildProviderPills(){const container=$m('provider-btns');if(!container)return;container.innerHTML='';Object.keys(providerIPs).forEach(prov=>{const btn=document.createElement('button');btn.className='pill-btn';btn.textContent=prov;btn.onclick=()=>selectProvider(prov,btn);container.appendChild(btn);});const customBtn=document.createElement('button');customBtn.className='pill-btn';customBtn.textContent='Custom';customBtn.onclick=()=>selectProvider('Custom',customBtn);container.appendChild(customBtn);}
+function buildProviderPills(){const container=$m('provider-btns');if(!container)return;container.innerHTML='';Object.keys(providerIPs).forEach(prov=>{const btn=document.createElement('button');btn.className='pill-btn';btn.textContent=prov;btn.onclick=()=>selectProvider(prov,btn);if(prov==='Railway') btn.classList.add('railway-hl');container.appendChild(btn);});const customBtn=document.createElement('button');customBtn.className='pill-btn';customBtn.textContent='Custom';customBtn.onclick=()=>selectProvider('Custom',customBtn);container.appendChild(customBtn);}
 function selectProvider(prov,btn){
 document.querySelectorAll('#provider-btns .pill-btn').forEach(b=>b.classList.remove('active'));
 btn.classList.add('active');
 currentProvider=prov;
-const rangeSection=$m('range-section');
+const rangeSection=$m('range-section'), railNote=$m('railway-note');
 if(prov==='Custom'){
-rangeSection.style.display='none';
+rangeSection.style.display='none'; railNote.style.display='none';
 $m('scan-ips').value=''; return;
 }
 rangeSection.style.display='flex';
+railNote.style.display = (prov==='Railway') ? 'block' : 'none';
 const rangeBtns=$m('range-btns'); rangeBtns.innerHTML='';
 const ranges=providerIPs[prov]?.ipv4||[];
 ranges.forEach(r=>{const b=document.createElement('button');b.className='pill-btn';b.textContent=r;b.onclick=()=>{loadRangeIPs(r,b);};rangeBtns.appendChild(b);});
@@ -3267,7 +3366,7 @@ function copyReachableSorted(){const rows=Array.from($m('scan-tbody').querySelec
 async function loadLogs(){try{const r=await fetch('/api/logs');if(r.status===401){showLogin();return;}const d=await r.json();const logs=d.logs||[];const tbody=$m('logs-tbody'),empty=$m('logs-empty');if(!tbody)return;if(!logs.length){tbody.innerHTML='';empty.style.display='block';return;}empty.style.display='none';tbody.innerHTML=logs.map((l,i)=>{const local=getPanelTime(l.time);return`<tr><td>${i+1}</td><td>${local.toISOString().replace('T',' ').split('.')[0]}</td><td>${esc(l.type||'Event')}</td><td>${esc(l.error||'')}</td></tr>`}).join('');}catch(err){console.error('loadLogs error:',err);}}
 async function loadLoginLogs(){try{const r=await fetch('/api/login-logs');if(!r.ok)return;const d=await r.json();const tbody=$m('login-logs-tbody');if(!tbody)return;tbody.innerHTML=d.logs.map(l=>`<tr><td>${timeAgo(l.timestamp)}</td><td><div style="font-weight:600">${esc(l.ip)}</div><div style="font-size:0.7rem;color:var(--text3);max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(l.user_agent)}">${esc(l.user_agent)}</div></td><td style="color:${l.success?'var(--green)':'var(--red)'}">${l.success?'✅ '+t('success'):'❌ '+t('failed')}</td></tr>`).join('');}catch(e){}}
 function timeAgo(ts){const then=new Date(ts),now=new Date(),diff=Math.floor((now-then)/1000);if(lang==='fa'){if(diff<60)return t('justNow');if(diff<3600)return t('minsAgo',{n:Math.floor(diff/60)});if(diff<86400)return t('hoursAgo',{n:Math.floor(diff/3600)});return new Date(ts).toLocaleDateString('fa-IR');}else{if(diff<60)return t('justNow');if(diff<3600)return t('minsAgo',{n:Math.floor(diff/60)});if(diff<86400)return t('hoursAgo',{n:Math.floor(diff/3600)});return new Date(ts).toLocaleDateString();}}
-async function loadTelegramSettings(){try{const r=await fetch('/api/settings');if(r.status===401){showLogin();return;}const d=await r.json();$m('tg-token').value=d.tg_bot_token||'';$m('tg-chat-id').value=d.tg_chat_id||'';$m('tg-interval').value=d.telegram_interval||'1';const events=(d.telegram_events||'').split(',');document.querySelectorAll('.tg-event').forEach(cb=>cb.checked=events.includes(cb.value));$m('tg-templates-en').value=d.telegram_templates_en||'{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}';$m('tg-templates-fa').value=d.telegram_templates_fa||'{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود به پنل VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}';
+async function loadTelegramSettings(){try{const r=await fetch('/api/settings');if(r.status===401){showLogin();return;}const d=await r.json();$m('tg-token').value=d.tg_bot_token||'';$m('tg-chat-id').value=d.tg_chat_id||'';$m('tg-interval').value=d.telegram_interval||'1';const events=(d.telegram_events||'').split(',');document.querySelectorAll('.tg-event').forEach(cb=>cb.checked=events.includes(cb.value));$m('tg-templates-en').value=d.telegram_templates_en||'{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}';$m('tg-templates-fa').value=d.telegram_templates_fa||'{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}';
 const tgLang = d.telegram_lang || 'en';
 const toggle = $m('tg-lang-toggle');
 if (tgLang === 'fa') {
@@ -3317,7 +3416,7 @@ previewHTML += `<span style="color: var(--primary); font-weight: bold; font-size
 previewHTML += `<span>${text}</span></div>`;
 }
 const mockDomain = window.location.host || "your-domain.com";
-previewHTML += `<div style="margin-top: 6px; padding-top: 4px; color: #00ff88;">`;
+previewHTML += `<div style="margin-top: 6px; padding-top: 4px; color: #4caf50;">`;
 previewHTML += `⚠️ <i>Auto Appended:</i><br>Open VROOM Panel (Link: https://${mockDomain}/panel)`;
 previewHTML += `</div>`;
 previewDiv.innerHTML = previewHTML;
