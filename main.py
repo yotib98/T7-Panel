@@ -1589,7 +1589,6 @@ function copyToClip(text, msg) {{
     return HTMLResponse(content=html)
 
 # ═══ SUBSCRIPTION PAGE (ONLY HTML - NO DOWNLOAD) ═══
-# این صفحه جایگزین کامل مسیر /sub/{uid} شده است
 
 @app.get("/sub/{uid}")
 @limiter.limit("10/minute")
@@ -2655,7 +2654,9 @@ async def tcp_to_ws(websocket, reader, conn_id, link_uid):
             try:
                 await websocket.send_bytes((b"\x00\x00" + data) if first else data)
                 first = False
-            except Exception: break    except Exception as e:
+            except Exception as e:
+                break
+    except Exception as e:
         logger.error(f"tcp_to_ws error {conn_id}: {e}", exc_info=True)
         error_logs.append({"time": datetime.now(timezone.utc).isoformat(), "error": f"tcp_to_ws {conn_id}: {e}", "type": "Tunnel"})
 
