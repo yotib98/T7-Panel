@@ -7,7 +7,7 @@ import re
 import base64
 import ipaddress
 import uuid as uuid_lib
-import asyncio  # اضافه شد
+import asyncio
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 from collections import deque, defaultdict
@@ -1499,7 +1499,7 @@ async def bulk_delete_addresses(request: Request, _=Depends(require_auth)):
     log_event("Clean IP", "Bulk deleted addresses")
     return {"ok": True}
 
-# ═══ USER DASHBOARD & SUBSCRIPTION ═══
+# ═══ USER DASHBOARD ═══
 
 @app.get("/user/{uid}")
 async def user_dashboard(uid: str, request: Request):
@@ -1663,6 +1663,844 @@ def _fmt_bytes(b: int) -> str:
     if b >= 1_073_741_824: return f"{b/1_073_741_824:.1f}GB"
     if b >= 1_048_576: return f"{b/1_048_576:.1f}MB"
     return f"{b/1024:.1f}KB"
+
+# ═══ NEW SUBSCRIPTION PAGE ═══
+
+@app.get("/sub-page/{uid}")
+async def subscription_page(uid: str):
+    async with LINKS_LOCK:
+        link = LINKS.get(uid)
+        if link is None:
+            raise HTTPException(status_code=404, detail="Link not found")
+    
+    if not link["active"]:
+        raise HTTPException(status_code=403, detail="Link disabled")
+    
+    expires = parse_expires_at(link.get("expires_at"))
+    if expires and expires < datetime.now(timezone.utc):
+        raise HTTPException(status_code=403, detail="Link expired")
+    
+    async with CUSTOM_ADDRESSES_LOCK:
+        addresses = list(CUSTOM_ADDRESSES)
+    
+    server_link = generate_vless_link(uid, remark=f"VROOM-{link['label']}")
+    config_base64 = base64.b64encode(server_link.encode()).decode()
+    
+    used_gb = round(link['used_bytes'] / (1024 * 1024 * 1024), 2)
+    limit_gb = round(link['limit_bytes'] / (1024 * 1024 * 1024), 2) if link['limit_bytes'] > 0 else 0
+    percent = round((link['used_bytes'] / link['limit_bytes']) * 100, 1) if link['limit_bytes'] > 0 else 0
+    
+    if expires and expires < datetime.now(timezone.utc):
+        status = "expired"
+        status_text = "منقضی شده / Expired"
+    elif link['limit_bytes'] > 0 and link['used_bytes'] >= link['limit_bytes']:
+        status = "limited"
+        status_text = "محدود شده / Limited"
+    else:
+        status = "active"
+        status_text = "فعال / Active"
+    
+    exp = link.get("expires_at")
+    if exp:
+        try:
+            exp_date = parse_expires_at(exp)
+            if exp_date:
+                days_left = (exp_date - datetime.now(timezone.utc)).days
+                if days_left < 0:
+                    days_left = 0
+                days_left_text = f"{days_left} روز / {days_left} days"
+                exp_display = exp_date.strftime("%Y-%m-%d %H:%M")
+            else:
+                days_left_text = "نامحدود / Unlimited"
+                exp_display = "نامحدود / Unlimited"
+        except:
+            days_left_text = "نامحدود / Unlimited"
+            exp_display = "نامحدود / Unlimited"
+    else:
+        days_left_text = "نامحدود / Unlimited"
+        exp_display = "نامحدود / Unlimited"
+    
+    html = f"""<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <title>🚀 VROOM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Vazirmatn:wght@300;400;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html, body {{
+            height: 100%;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+        }}
+        body {{
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            font-family: 'Vazirmatn', 'Orbitron', 'Segoe UI', sans-serif;
+            background: radial-gradient(ellipse at bottom, #0d1b2a 0%, #000000 100%);
+            color: #fff;
+            direction: rtl;
+            padding: 20px;
+            position: relative;
+            overflow-y: auto;
+        }}
+        body::before {{
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 20% 50%, rgba(124,92,252,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 50%, rgba(167,139,250,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 50% 100%, rgba(124,92,252,0.05) 0%, transparent 50%);
+            z-index: 0;
+            pointer-events: none;
+        }}
+        body::after {{
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, rgba(255,255,255,0.3), transparent),
+                radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(2px 2px at 50px 160px, rgba(255,255,255,0.25), transparent),
+                radial-gradient(2px 2px at 90px 40px, rgba(255,255,255,0.15), transparent),
+                radial-gradient(2px 2px at 130px 80px, rgba(255,255,255,0.3), transparent),
+                radial-gradient(2px 2px at 160px 30px, rgba(255,255,255,0.2), transparent),
+                radial-gradient(2px 2px at 200px 120px, rgba(255,255,255,0.15), transparent),
+                radial-gradient(2px 2px at 250px 50px, rgba(255,255,255,0.25), transparent),
+                radial-gradient(2px 2px at 300px 180px, rgba(255,255,255,0.1), transparent);
+            background-size: 300px 300px;
+            background-repeat: repeat;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.6;
+        }}
+        .lang-toggle {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 16px;
+            padding: 10px 20px;
+            color: #fff;
+            cursor: pointer;
+            font-family: 'Vazirmatn', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }}
+        .lang-toggle:hover {{ 
+            background: rgba(255,255,255,0.15); 
+            transform: scale(1.05) translateY(-2px);
+            box-shadow: 0 12px 48px rgba(124,92,252,0.2);
+        }}
+        .lang-toggle .dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #34d399;
+            box-shadow: 0 0 20px rgba(52,211,153,0.6);
+            animation: pulse-dot 2s infinite;
+        }}
+        @keyframes pulse-dot {{ 0%,100% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.5; transform: scale(0.8); }} }}
+        
+        .theme-selector {{
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(255,255,255,0.06);
+            backdrop-filter: blur(20px);
+            padding: 14px 10px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }}
+        .theme-btn {{
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.15);
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+        }}
+        .theme-btn:hover {{ 
+            transform: scale(1.2); 
+            border-color: rgba(255,255,255,0.5);
+            box-shadow: 0 0 30px rgba(255,215,0,0.15);
+        }}
+        .theme-btn.active {{ 
+            border-color: #ffd700; 
+            box-shadow: 0 0 25px rgba(255,215,0,0.3);
+            transform: scale(1.1);
+        }}
+        .theme-btn.space {{ background: radial-gradient(ellipse at bottom, #0d1b2a 0%, #000000 100%); }}
+        .theme-btn.ocean {{ background: linear-gradient(135deg, #1a2980, #26d0ce); }}
+        .theme-btn.sunset {{ background: linear-gradient(135deg, #f12711, #f5af19); }}
+        .theme-btn.forest {{ background: linear-gradient(135deg, #134e5e, #71b280); }}
+        .theme-btn.neon {{ background: linear-gradient(135deg, #1d1d2e, #ff00cc); }}
+        
+        .loader-wrapper {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.92);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.8s ease, visibility 0.8s ease;
+        }}
+        .loader-wrapper.hide {{ opacity: 0; visibility: hidden; }}
+        @keyframes spin-loader {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        .loader {{
+            width: 70px;
+            height: 70px;
+            border: 3px solid rgba(255,255,255,0.05);
+            border-top: 3px solid #7c5cfc;
+            border-radius: 50%;
+            animation: spin-loader 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+            box-shadow: 0 0 60px rgba(124,92,252,0.2);
+        }}
+        .loader-text {{
+            margin-top: 25px;
+            color: #a78bfa;
+            font-size: 0.9rem;
+            letter-spacing: 4px;
+            text-align: center;
+            font-family: 'Orbitron', monospace;
+        }}
+        
+        .stars-layer {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }}
+        @keyframes twinkle {{ 0%,100% {{ opacity: 0.2; transform: scale(0.8); }} 50% {{ opacity: 1; transform: scale(1.3); }} }}
+        .star {{
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle var(--duration) ease-in-out infinite;
+            animation-delay: var(--delay);
+        }}
+        
+        @keyframes shoot {{
+            0% {{ transform: translate(0,0) rotate(-45deg); opacity: 1; }}
+            70% {{ opacity: 1; }}
+            100% {{ transform: translate(-800px, 800px) rotate(-45deg); opacity: 0; }}
+        }}
+        .shooting-star {{
+            position: fixed;
+            width: 3px;
+            height: 3px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 20px 5px rgba(255,255,255,0.3);
+            animation: shoot 5s linear infinite;
+            z-index: 0;
+            pointer-events: none;
+        }}
+        .shooting-star::after {{
+            content: '';
+            position: absolute;
+            top: 50%;
+            right: 0;
+            width: 120px;
+            height: 1px;
+            background: linear-gradient(to left, rgba(255,255,255,0.5), transparent);
+            transform: translateY(-50%);
+        }}
+        .shooting-star:nth-child(1) {{ top: 10%; left: 70%; animation-delay: 0s; }}
+        .shooting-star:nth-child(2) {{ top: 30%; left: 50%; animation-delay: 3s; }}
+        .shooting-star:nth-child(3) {{ top: 60%; left: 80%; animation-delay: 6s; }}
+        
+        .space-scene {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0.2;
+        }}
+        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        @keyframes orbit-spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        @keyframes float {{ 0%,100% {{ transform: translateY(0px) scale(1); }} 50% {{ transform: translateY(-20px) scale(1.02); }} }}
+        @keyframes pulse {{ 0%,100% {{ box-shadow: 0 0 80px rgba(75,158,218,0.2), inset -30px -30px 60px rgba(0,0,0,0.7); }} 50% {{ box-shadow: 0 0 120px rgba(75,158,218,0.3), inset -35px -35px 70px rgba(0,0,0,0.8); }} }}
+        .earth-wrapper {{ position: relative; animation: float 6s ease-in-out infinite; }}
+        .earth {{
+            width: 180px;
+            height: 180px;
+            border-radius: 50%;
+            position: relative;
+            animation: spin 25s linear infinite, pulse 4s ease-in-out infinite;
+            box-shadow: 0 0 80px rgba(75,158,218,0.2), inset -30px -30px 60px rgba(0,0,0,0.7);
+            overflow: hidden;
+        }}
+        .earth-layer {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 50%; }}
+        .earth-base {{ background: radial-gradient(circle at 30% 30%, #4facfe, #1a4b7a 60%, #0a1a2a 95%); }}
+        .earth-continents {{
+            background:
+                radial-gradient(ellipse at 70% 40%, #2d8a4e 15%, transparent 25%),
+                radial-gradient(ellipse at 30% 60%, #2d8a4e 20%, transparent 30%),
+                radial-gradient(ellipse at 50% 75%, #2d8a4e 10%, transparent 20%),
+                radial-gradient(ellipse at 80% 70%, #2d8a4e 12%, transparent 22%),
+                radial-gradient(ellipse at 15% 25%, #2d8a4e 8%, transparent 18%),
+                radial-gradient(ellipse at 55% 30%, #3a9d5e 18%, transparent 28%);
+            opacity: 0.8;
+        }}
+        .earth-clouds {{
+            background:
+                radial-gradient(ellipse at 20% 30%, rgba(255,255,255,0.2) 10%, transparent 25%),
+                radial-gradient(ellipse at 70% 60%, rgba(255,255,255,0.15) 15%, transparent 30%),
+                radial-gradient(ellipse at 40% 80%, rgba(255,255,255,0.15) 12%, transparent 22%),
+                radial-gradient(ellipse at 85% 20%, rgba(255,255,255,0.12) 8%, transparent 20%),
+                radial-gradient(ellipse at 10% 70%, rgba(255,255,255,0.1) 10%, transparent 20%);
+            animation: spin 50s linear infinite reverse;
+            opacity: 0.4;
+        }}
+        .earth-shine {{ background: radial-gradient(circle at 25% 25%, rgba(255,255,255,0.25) 0%, transparent 50%); }}
+        .orbit {{
+            position: absolute;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 50%;
+            animation: orbit-spin var(--orbit-duration) linear infinite;
+        }}
+        .orbit-1 {{ width: 340px; height: 340px; --orbit-duration: 20s; }}
+        .orbit-2 {{ width: 460px; height: 460px; --orbit-duration: 35s; border-color: rgba(255,215,0,0.05); }}
+        .orbit-3 {{ width: 580px; height: 580px; --orbit-duration: 50s; border-color: rgba(0,255,200,0.04); }}
+        .satellite {{
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            box-shadow: 0 0 30px currentColor;
+        }}
+        .satellite-1 {{ top: 5%; left: 80%; background: #ffd700; color: #ffd700; }}
+        .satellite-2 {{ top: 80%; left: 10%; background: #ff6b6b; color: #ff6b6b; animation-delay: -10s; }}
+        .satellite-3 {{ top: 20%; left: 5%; background: #4ecdc4; color: #4ecdc4; animation-delay: -20s; }}
+        
+        .rocket {{
+            position: fixed;
+            z-index: 1;
+            font-size: 28px;
+            animation: rocket-fly 10s linear infinite;
+            filter: drop-shadow(0 0 30px rgba(255,100,0,0.4));
+            pointer-events: none;
+        }}
+        .rocket:nth-child(2) {{ animation-delay: 5s; font-size: 20px; filter: drop-shadow(0 0 20px rgba(0,200,255,0.3)); }}
+        @keyframes rocket-fly {{
+            0% {{ transform: translate(-100px, 100px) rotate(-45deg) scale(0.5); opacity: 0; }}
+            10% {{ opacity: 1; }}
+            90% {{ opacity: 1; }}
+            100% {{ transform: translate(100vw, -100vh) rotate(-45deg) scale(1.8); opacity: 0; }}
+        }}
+        
+        .card {{
+            position: relative;
+            z-index: 10;
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border-radius: 40px;
+            padding: 40px 45px;
+            width: 100%;
+            max-width: 580px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 40px 80px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+            text-align: center;
+            max-height: 95vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            will-change: transform;
+            margin: 20px 0;
+        }}
+        .card::-webkit-scrollbar {{ width: 4px; }}
+        .card::-webkit-scrollbar-track {{ background: transparent; }}
+        .card::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.12); border-radius: 4px; }}
+        .card:hover {{
+            box-shadow: 0 50px 100px rgba(0,0,0,0.6), 0 0 60px rgba(124,92,252,0.03);
+        }}
+        
+        .notification {{
+            background: rgba(255,215,0,0.06);
+            border: 1px solid rgba(255,215,0,0.08);
+            border-radius: 16px;
+            padding: 12px 18px;
+            margin-bottom: 20px;
+            font-size: 0.8rem;
+            color: #ffd700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+            flex-shrink: 0;
+            font-family: 'Vazirmatn', sans-serif;
+        }}
+        .notification.success {{ background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.1); color: #34d399; }}
+        
+        .badge {{
+            display: inline-block;
+            background: rgba(124,92,252,0.15);
+            color: #a78bfa;
+            padding: 6px 24px;
+            border-radius: 50px;
+            font-size: 0.7rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            border: 1px solid rgba(124,92,252,0.1);
+            margin-bottom: 14px;
+            font-weight: 700;
+            font-family: 'Orbitron', monospace;
+            flex-shrink: 0;
+        }}
+        
+        h1 {{
+            font-size: 2.4rem;
+            font-weight: 900;
+            margin-bottom: 4px;
+            background: linear-gradient(135deg, #7c5cfc, #a78bfa, #7c5cfc);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shimmer-text 4s ease-in-out infinite;
+            font-family: 'Orbitron', monospace;
+            letter-spacing: 2px;
+            flex-shrink: 0;
+        }}
+        @keyframes shimmer-text {{
+            0%,100% {{ background-position: 0% 50%; }}
+            50% {{ background-position: 100% 50%; }}
+        }}
+        
+        .subtitle {{ 
+            font-size: 0.85rem; 
+            opacity: 0.3; 
+            margin-bottom: 28px; 
+            letter-spacing: 3px;
+            font-weight: 300;
+            font-family: 'Orbitron', monospace;
+            flex-shrink: 0;
+        }}
+        
+        .status-with-dot {{ display: flex; align-items: center; gap: 8px; justify-content: center; }}
+        .status-dot {{
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }}
+        .status-dot.active {{ background: #34d399; box-shadow: 0 0 20px rgba(52,211,153,0.5); }}
+        .status-dot.limited {{ background: #fbbf24; box-shadow: 0 0 20px rgba(251,191,36,0.5); }}
+        .status-dot.expired {{ background: #f87171; box-shadow: 0 0 20px rgba(248,113,113,0.5); }}
+        
+        .info-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            text-align: right;
+            margin-bottom: 18px;
+        }}
+        .info-item {{
+            background: rgba(255,255,255,0.04);
+            padding: 14px 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.04);
+            transition: all 0.3s;
+        }}
+        .info-item:hover {{ background: rgba(255,255,255,0.08); transform: translateY(-2px); }}
+        .info-item.full {{ grid-column: span 2; }}
+        .label {{ 
+            font-size: 0.55rem; 
+            text-transform: uppercase; 
+            opacity: 0.35; 
+            letter-spacing: 2px; 
+            display: block; 
+            margin-bottom: 4px;
+            font-weight: 700;
+        }}
+        .value {{ font-size: 1.1rem; font-weight: 700; }}
+        .status-active {{ color: #34d399; }}
+        .status-limited {{ color: #fbbf24; }}
+        .status-expired {{ color: #f87171; }}
+        
+        .inbounds-section {{ margin: 14px 0 12px; text-align: right; flex-shrink: 0; }}
+        .inbounds-title {{ 
+            font-size: 0.6rem; 
+            text-transform: uppercase; 
+            opacity: 0.3; 
+            letter-spacing: 2px; 
+            margin-bottom: 8px;
+            font-weight: 700;
+        }}
+        .inbound-tags {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }}
+        .inbound-tag {{
+            background: rgba(255,255,255,0.04);
+            padding: 5px 16px;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            border: 1px solid rgba(255,255,255,0.04);
+            color: rgba(255,255,255,0.5);
+            transition: all 0.3s;
+            font-family: 'Vazirmatn', sans-serif;
+        }}
+        .inbound-tag:hover {{ 
+            background: rgba(124,92,252,0.12); 
+            border-color: rgba(124,92,252,0.15); 
+            color: #a78bfa;
+            transform: translateY(-2px);
+        }}
+        
+        .progress-section {{ margin: 12px 0 16px; flex-shrink: 0; }}
+        .progress-label {{ display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.5; margin-bottom: 6px; }}
+        .progress-bar {{ width: 100%; height: 6px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; }}
+        .progress-fill {{ height: 100%; background: linear-gradient(90deg, #7c5cfc, #a78bfa); border-radius: 10px; transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1); width: {percent}%; box-shadow: 0 0 20px rgba(124,92,252,0.2); }}
+        
+        .qr-section {{ margin: 18px 0 8px; display: flex; justify-content: center; flex-shrink: 0; }}
+        .qr-container {{
+            background: rgba(255,255,255,0.95);
+            padding: 16px;
+            border-radius: 20px;
+            display: inline-block;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }}
+        .qr-container:hover {{ transform: scale(1.04) rotate(2deg); box-shadow: 0 12px 60px rgba(124,92,252,0.15); }}
+        .qr-container img {{ display: block; width: 180px; height: 180px; border-radius: 12px; max-width: 100%; }}
+        .qr-label {{ font-size: 0.55rem; opacity: 0.3; margin-top: 8px; letter-spacing: 2px; }}
+        
+        .config-box {{
+            background: rgba(0,0,0,0.4);
+            padding: 14px 18px;
+            border-radius: 16px;
+            font-size: 0.7rem;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+            margin: 14px 0;
+            max-height: 110px;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.06);
+            text-align: left;
+            direction: ltr;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.8;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+        }}
+        .config-box::-webkit-scrollbar {{ width: 3px; }}
+        .config-box::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 3px; }}
+        
+        .btn-group {{
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+            flex-shrink: 0;
+        }}
+        .btn {{
+            padding: 12px 28px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Vazirmatn', sans-serif;
+        }}
+        .btn-primary {{ background: linear-gradient(135deg, #7c5cfc, #a78bfa); color: #fff; box-shadow: 0 8px 30px rgba(124,92,252,0.25); }}
+        .btn-primary:hover {{ transform: translateY(-4px) scale(1.04); box-shadow: 0 12px 48px rgba(124,92,252,0.35); }}
+        .btn-secondary {{ background: linear-gradient(135deg, #f7971e, #ffd200); color: #000; box-shadow: 0 8px 30px rgba(255,210,0,0.2); }}
+        .btn-secondary:hover {{ transform: translateY(-4px) scale(1.04); box-shadow: 0 12px 48px rgba(255,210,0,0.3); }}
+        .btn-success {{ background: linear-gradient(135deg, #11998e, #38ef7d); color: #fff; box-shadow: 0 8px 30px rgba(56,239,125,0.2); }}
+        .btn-success:hover {{ transform: translateY(-4px) scale(1.04); box-shadow: 0 12px 48px rgba(56,239,125,0.3); }}
+        .btn-sm {{ padding: 8px 18px; font-size: 0.7rem; }}
+        
+        .footer-text {{ margin-top: 20px; font-size: 0.55rem; opacity: 0.12; letter-spacing: 3px; font-family: 'Orbitron', monospace; flex-shrink: 0; }}
+        
+        @media (max-width: 500px) {{
+            .card {{ padding: 20px 16px; }}
+            h1 {{ font-size: 1.6rem; }}
+            .info-grid {{ grid-template-columns: 1fr; }}
+            .info-item.full {{ grid-column: span 1; }}
+            .earth {{ width: 100px; height: 100px; }}
+            .orbit-1 {{ width: 200px; height: 200px; }}
+            .orbit-2 {{ width: 260px; height: 260px; }}
+            .orbit-3 {{ width: 320px; height: 320px; }}
+            .btn {{ font-size: 0.65rem; padding: 8px 16px; }}
+            .qr-container img {{ width: 120px; height: 120px; }}
+            .theme-selector {{ right: 10px; padding: 10px 6px; gap: 8px; }}
+            .theme-btn {{ width: 28px; height: 28px; }}
+            .lang-toggle {{ top: 10px; right: 10px; padding: 6px 14px; font-size: 10px; }}
+            .config-box {{ max-height: 70px; font-size: 0.6rem; padding: 10px 12px; }}
+        }}
+        
+        .glow-purple {{ text-shadow: 0 0 60px rgba(124,92,252,0.15); }}
+        .hidden {{ display: none !important; }}
+    </style>
+</head>
+<body>
+    <button class="lang-toggle" onclick="toggleLang()" id="langBtn">
+        <span class="dot"></span>
+        <span id="langText">🇮🇷 فارسی</span>
+    </button>
+    
+    <div class="theme-selector">
+        <button class="theme-btn space active" data-theme="space" title="فضایی"></button>
+        <button class="theme-btn ocean" data-theme="ocean" title="اقیانوسی"></button>
+        <button class="theme-btn sunset" data-theme="sunset" title="غروب"></button>
+        <button class="theme-btn forest" data-theme="forest" title="جنگلی"></button>
+        <button class="theme-btn neon" data-theme="neon" title="نئون"></button>
+    </div>
+    
+    <div class="loader-wrapper" id="loaderWrapper">
+        <div style="text-align:center;">
+            <div class="loader"></div>
+            <div class="loader-text" id="loaderText">🌌 INITIALIZING... / در حال اتصال...</div>
+        </div>
+    </div>
+    
+    <div class="stars-layer" id="starsLayer"></div>
+    <div class="shooting-star"></div><div class="shooting-star"></div><div class="shooting-star"></div>
+    <div class="rocket">🚀</div><div class="rocket">🛸</div>
+    
+    <div class="space-scene">
+        <div class="orbit orbit-1"><div class="satellite satellite-1"></div></div>
+        <div class="orbit orbit-2"><div class="satellite satellite-2"></div></div>
+        <div class="orbit orbit-3"><div class="satellite satellite-3"></div></div>
+        <div class="earth-wrapper"><div class="earth"><div class="earth-layer earth-base"></div><div class="earth-layer earth-continents"></div><div class="earth-layer earth-clouds"></div><div class="earth-layer earth-shine"></div></div></div>
+    </div>
+    
+    <div class="card" id="mainCard">
+        <div class="notification success" id="notificationBar">
+            <span>🛰️</span>
+            <span id="notificationText">ارتباط با ایستگاه فضایی برقرار است / Connection established</span>
+        </div>
+        
+        <div class="badge">✦ VROOM</div>
+        <h1 class="glow-purple">🚀 VROOM</h1>
+        <div class="subtitle" id="subtitleText">GATEWAY // درگاه اتصال</div>
+        
+        <div class="info-grid">
+            <div class="info-item full">
+                <span class="label" id="statusLabel">وضعیت / Status</span>
+                <span class="value status-{status}">
+                    <span class="status-with-dot"><span class="status-dot {status}"></span><span id="statusText">{status_text}</span></span>
+                </span>
+            </div>
+            <div class="info-item"><span class="label" id="usedLabel">📊 مصرف / Used</span><span class="value">{used_gb} GB</span></div>
+            <div class="info-item"><span class="label" id="limitLabel">📦 حجم کل / Total</span><span class="value">{limit_gb if limit_gb > 0 else '∞'} GB</span></div>
+            <div class="info-item"><span class="label" id="expiryLabel">⏳ انقضا / Expiry</span><span class="value" style="font-size:0.9rem;">{exp_display}</span></div>
+            <div class="info-item"><span class="label" id="daysLabel">📅 روز باقی‌مانده / Days Left</span><span class="value">{days_left_text}</span></div>
+        </div>
+        
+        <div class="inbounds-section">
+            <div class="inbounds-title" id="serversTitle">🌐 سرورهای فعال / Active Servers</div>
+            <div class="inbound-tags">
+                <span class="inbound-tag">🚀 VLESS (اصلی / Main)</span>
+                {''.join([f'<span class="inbound-tag">🌐 {addr}</span>' for addr in addresses[:3]])}
+            </div>
+        </div>
+        
+        <div class="progress-section">
+            <div class="progress-label"><span id="usageLabel">میزان مصرف / Usage</span><span>{percent}%</span></div>
+            <div class="progress-bar"><div class="progress-fill" style="width: {percent}%;"></div></div>
+        </div>
+        
+        <div class="qr-section">
+            <div class="qr-container">
+                <img id="qrCodeImage" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={config_base64}" alt="QR Code">
+                <div class="qr-label">✦ اسکن کنید / Scan ✦</div>
+            </div>
+        </div>
+        
+        <div class="config-box" id="configBox">{server_link}</div>
+        
+        <div class="btn-group">
+            <button class="btn btn-primary btn-sm" onclick="copyConfig()" id="copyBtn">📋 کپی / Copy</button>
+            <button class="btn btn-secondary btn-sm" onclick="copySub()" id="subBtn">📥 ساب / Sub</button>
+            <button class="btn btn-success btn-sm" onclick="showQR()" id="qrBtn">📱 QR</button>
+        </div>
+        
+        <div class="footer-text">✦ VROOM GATEWAY v3.0 ✦</div>
+    </div>
+    
+    <script>
+        let currentLang = localStorage.getItem('vroom_sub_lang') || 'fa';
+        const translations = {{
+            fa: {{
+                loader: '🌌 INITIALIZING... / در حال اتصال...',
+                notification: 'ارتباط با ایستگاه فضایی برقرار است / Connection established',
+                subtitle: 'GATEWAY // درگاه اتصال',
+                status: 'وضعیت / Status',
+                used: '📊 مصرف / Used',
+                limit: '📦 حجم کل / Total',
+                expiry: '⏳ انقضا / Expiry',
+                days: '📅 روز باقی‌مانده / Days Left',
+                servers: '🌐 سرورهای فعال / Active Servers',
+                usage: 'میزان مصرف / Usage',
+                copy: '📋 کپی / Copy',
+                sub: '📥 ساب / Sub',
+                qr: '📱 QR'
+            }},
+            en: {{
+                loader: '🌌 INITIALIZING...',
+                notification: 'Connection established',
+                subtitle: 'GATEWAY',
+                status: 'Status',
+                used: '📊 Used',
+                limit: '📦 Total',
+                expiry: '⏳ Expiry',
+                days: '📅 Days Left',
+                servers: '🌐 Active Servers',
+                usage: 'Usage',
+                copy: '📋 Copy',
+                sub: '📥 Sub',
+                qr: '📱 QR'
+            }}
+        }};
+
+        function toggleLang() {{
+            currentLang = (currentLang === 'fa') ? 'en' : 'fa';
+            const t = translations[currentLang];
+            document.getElementById('loaderText').textContent = t.loader;
+            document.getElementById('notificationText').textContent = t.notification;
+            document.getElementById('subtitleText').textContent = t.subtitle;
+            document.getElementById('statusLabel').textContent = t.status;
+            document.getElementById('usedLabel').textContent = t.used;
+            document.getElementById('limitLabel').textContent = t.limit;
+            document.getElementById('expiryLabel').textContent = t.expiry;
+            document.getElementById('daysLabel').textContent = t.days;
+            document.getElementById('serversTitle').textContent = t.servers;
+            document.getElementById('usageLabel').textContent = t.usage;
+            document.getElementById('copyBtn').textContent = t.copy;
+            document.getElementById('subBtn').textContent = t.sub;
+            document.getElementById('qrBtn').textContent = t.qr;
+            document.getElementById('langText').textContent = currentLang === 'fa' ? '🇮🇷 فارسی' : '🇬🇧 English';
+            document.documentElement.lang = currentLang;
+            document.documentElement.dir = currentLang === 'fa' ? 'rtl' : 'ltr';
+            localStorage.setItem('vroom_sub_lang', currentLang);
+        }}
+        if (currentLang === 'en') toggleLang();
+
+        const themeBtns = document.querySelectorAll('.theme-btn');
+        const body = document.body;
+        const themes = {{
+            space: {{ background: 'radial-gradient(ellipse at bottom, #0d1b2a 0%, #000000 100%)' }},
+            ocean: {{ background: 'linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)' }},
+            sunset: {{ background: 'linear-gradient(135deg, #f12711 0%, #f5af19 100%)' }},
+            forest: {{ background: 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)' }},
+            neon: {{ background: 'linear-gradient(135deg, #1d1d2e 0%, #ff00cc 100%)' }}
+        }};
+        themeBtns.forEach(btn => {{
+            btn.addEventListener('click', function() {{
+                themeBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                const theme = this.dataset.theme;
+                if (themes[theme]) body.style.background = themes[theme].background;
+            }});
+        }});
+        
+        window.addEventListener('load', function() {{
+            setTimeout(function() {{
+                const loader = document.getElementById('loaderWrapper');
+                if (loader) loader.classList.add('hide');
+            }}, 1500);
+        }});
+        
+        (function createStars() {{
+            const container = document.getElementById('starsLayer');
+            if (!container) return;
+            for (let i = 0; i < 350; i++) {{
+                const star = document.createElement('div');
+                star.className = 'star';
+                const size = Math.random() * 4 + 0.5;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.setProperty('--duration', (Math.random() * 5 + 2) + 's');
+                star.style.setProperty('--delay', (Math.random() * 7) + 's');
+                container.appendChild(star);
+            }}
+        }})();
+        
+        const config = '{server_link}';
+        const subUrl = window.location.href;
+        const uid = '{uid}';
+        
+        function copyConfig() {{ copyText(config, '✅ کانفیگ کپی شد! / Config copied!'); }}
+        function copySub() {{ copyText(subUrl, '✅ لینک ساب کپی شد! / Subscription URL copied!'); }}
+        
+        function showQR() {{
+            const qrImg = document.querySelector('.qr-container img');
+            const currentSrc = qrImg.src;
+            const newSize = Math.min(window.innerWidth - 80, 450);
+            qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=' + newSize + 'x' + newSize + '&data=' + encodeURIComponent(config);
+            setTimeout(() => {{
+                if (!qrImg.src.includes('size=' + newSize)) {{
+                    qrImg.src = currentSrc;
+                }}
+            }}, 5000);
+            alert('📱 QR Code بزرگنمایی شد! / QR Code enlarged!');
+        }}
+        
+        function copyText(text, message) {{
+            if (navigator.clipboard) {{
+                navigator.clipboard.writeText(text).then(() => alert(message));
+            }} else {{
+                const input = document.createElement('input');
+                input.value = text;
+                document.body.appendChild(input);
+                input.select();
+                document.execCommand('copy');
+                document.body.removeChild(input);
+                alert(message);
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+    
+    return HTMLResponse(content=html)
 
 # ═══ SCANNER ═══
 
