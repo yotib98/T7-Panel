@@ -1588,86 +1588,12 @@ function copyToClip(text, msg) {{
 </html>"""
     return HTMLResponse(content=html)
 
-@app.get("/user/{uid}/sub")
-@limiter.limit("10/minute")
-async def user_subscription(uid: str, request: Request):
-    async with LINKS_LOCK:
-        link = LINKS.get(uid)
-        if not link or not link["active"]:
-            raise HTTPException(status_code=404, detail="link not found or disabled")
-        link = dict(link)
-    expires = parse_expires_at(link.get("expires_at"))
-    if expires and expires < datetime.now(timezone.utc):
-        raise HTTPException(status_code=403, detail="link expired")
-    status = "active"
-    if link.get("limit_bytes") > 0 and link["used_bytes"] >= link["limit_bytes"]:
-        status = "quota_exceeded"
-    elif expires and expires < datetime.now(timezone.utc):
-        status = "expired"
-    elif not link["active"]:
-        status = "blocked"
-    async with CUSTOM_ADDRESSES_LOCK:
-        addresses = list(CUSTOM_ADDRESSES)
-    extra = {
-        "custom_path": link.get("custom_path", ""),
-        "custom_sni": link.get("custom_sni", ""),
-        "custom_host": link.get("custom_host", ""),
-        "custom_fp": link.get("custom_fp", "chrome"),
-        "fragment": link.get("fragment", ""),
-    }
-    sub_content = generate_subscription_content(link, uid, addresses, extra, status)
-    encoded = base64.b64encode(sub_content.encode()).decode()
-    total_bytes = link["limit_bytes"] if link["limit_bytes"] > 0 else UNLIMITED_QUOTA_BYTES
-    expire_ts = int(expires.timestamp()) if expires else 0
-    headers = {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="sub.txt"',
-        "profile-update-interval": "6",
-        "subscription-userinfo": f"upload={link['used_bytes']}; download=0; total={total_bytes}; expire={expire_ts}",
-        "X-Status": status,
-    }
-    log_event("Subscription", f"Subscription accessed for {link['label']} ({uid}) status={status}", ip=request.client.host)
-    return Response(content=encoded, headers=headers)
+# ═══ SUBSCRIPTION PAGE (ONLY HTML - NO DOWNLOAD) ═══
+# این صفحه جایگزین کامل مسیر /sub/{uid} شده است
 
 @app.get("/sub/{uid}")
 @limiter.limit("10/minute")
-async def subscription_endpoint(uid: str, request: Request):
-    return await user_subscription(uid, request)
-
-def generate_subscription_content(link: dict, uid: str, addresses: list, extra: dict = None, status: str = "active") -> str:
-    used = link["used_bytes"]; limit = link["limit_bytes"]
-    usage_str = f"{_fmt_bytes(used)} / ∞" if limit == 0 else f"{_fmt_bytes(used)} / {_fmt_bytes(limit)}"
-    secs_left = seconds_until_expiry(link.get("expires_at"))
-    expiry_str = "∞" if secs_left is None else ("Expired" if secs_left == 0 else f"{secs_left//86400} Days Left")
-    status_remark = ""
-    if status == "quota_exceeded":
-        status_remark = "🚫 Quota Exceeded"
-    elif status == "expired":
-        status_remark = "⏰ Expired"
-    elif status == "blocked":
-        status_remark = "🔒 Blocked"
-    full_remark = f"📊 {usage_str} | ⏳ {expiry_str}"
-    if status_remark:
-        full_remark += f" | {status_remark}"
-    flag_emoji = code_to_flag(link.get("flag", ""))
-    if flag_emoji:
-        full_remark = flag_emoji + " " + full_remark
-    status_node = generate_vless_link(uid, remark=full_remark, address="0.0.0.0", extra=extra)
-    server_node = generate_vless_link(uid, remark=f"{flag_emoji}This Service is Free" if flag_emoji else "This Service is Free", extra=extra)
-    links = [status_node, server_node]
-    for i, addr in enumerate(addresses):
-        links.append(generate_vless_link(uid, remark=f"{flag_emoji}VROOM-{link['label']}-IP{i+1}" if flag_emoji else f"VROOM-{link['label']}-IP{i+1}", address=addr, extra=extra))
-    return "\n".join(links)
-
-def _fmt_bytes(b: int) -> str:
-    if b >= 1_073_741_824: return f"{b/1_073_741_824:.1f}GB"
-    if b >= 1_048_576: return f"{b/1_048_576:.1f}MB"
-    return f"{b/1024:.1f}KB"
-
-# ═══ NEW SUBSCRIPTION PAGE ═══
-
-@app.get("/sub-page/{uid}")
-async def subscription_page(uid: str):
+async def subscription_page(uid: str, request: Request):
     async with LINKS_LOCK:
         link = LINKS.get(uid)
         if link is None:
@@ -1719,6 +1645,9 @@ async def subscription_page(uid: str):
     else:
         days_left_text = "نامحدود / Unlimited"
         exp_display = "نامحدود / Unlimited"
+    
+    # لیست آدرس‌های تمیز برای نمایش
+    addr_tags = ''.join([f'<span class="inbound-tag">🌐 {addr}</span>' for addr in addresses[:5]])
     
     html = f"""<!DOCTYPE html>
 <html lang="fa">
@@ -2336,7 +2265,7 @@ async def subscription_page(uid: str):
             <div class="inbounds-title" id="serversTitle">🌐 سرورهای فعال / Active Servers</div>
             <div class="inbound-tags">
                 <span class="inbound-tag">🚀 VLESS (اصلی / Main)</span>
-                {''.join([f'<span class="inbound-tag">🌐 {addr}</span>' for addr in addresses[:3]])}
+                {addr_tags}
             </div>
         </div>
         
@@ -2356,7 +2285,7 @@ async def subscription_page(uid: str):
         
         <div class="btn-group">
             <button class="btn btn-primary btn-sm" onclick="copyConfig()" id="copyBtn">📋 کپی / Copy</button>
-            <button class="btn btn-secondary btn-sm" onclick="copySub()" id="subBtn">📥 ساب / Sub</button>
+            <button class="btn btn-secondary btn-sm" onclick="copySubUrl()" id="subBtn">📥 لینک ساب / Sub</button>
             <button class="btn btn-success btn-sm" onclick="showQR()" id="qrBtn">📱 QR</button>
         </div>
         
@@ -2378,7 +2307,7 @@ async def subscription_page(uid: str):
                 servers: '🌐 سرورهای فعال / Active Servers',
                 usage: 'میزان مصرف / Usage',
                 copy: '📋 کپی / Copy',
-                sub: '📥 ساب / Sub',
+                sub: '📥 لینک ساب / Sub',
                 qr: '📱 QR'
             }},
             en: {{
@@ -2468,7 +2397,7 @@ async def subscription_page(uid: str):
         const uid = '{uid}';
         
         function copyConfig() {{ copyText(config, '✅ کانفیگ کپی شد! / Config copied!'); }}
-        function copySub() {{ copyText(subUrl, '✅ لینک ساب کپی شد! / Subscription URL copied!'); }}
+        function copySubUrl() {{ copyText(subUrl, '✅ لینک ساب کپی شد! / Subscription URL copied!'); }}
         
         function showQR() {{
             const qrImg = document.querySelector('.qr-container img');
@@ -2726,8 +2655,7 @@ async def tcp_to_ws(websocket, reader, conn_id, link_uid):
             try:
                 await websocket.send_bytes((b"\x00\x00" + data) if first else data)
                 first = False
-            except Exception: break
-    except Exception as e:
+            except Exception: break    except Exception as e:
         logger.error(f"tcp_to_ws error {conn_id}: {e}", exc_info=True)
         error_logs.append({"time": datetime.now(timezone.utc).isoformat(), "error": f"tcp_to_ws {conn_id}: {e}", "type": "Tunnel"})
 
