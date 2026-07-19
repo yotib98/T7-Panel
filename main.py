@@ -7,6 +7,7 @@ import re
 import base64
 import ipaddress
 import uuid as uuid_lib
+import asyncio  # اضافه شد
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 from collections import deque, defaultdict
