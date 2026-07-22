@@ -55,7 +55,7 @@ LOGGING_CONFIG = {
     "root": {"level": "INFO", "handlers": ["json_console"]},
 }
 logging.config.dictConfig(LOGGING_CONFIG)
-logger = logging.getLogger("VROOM")
+logger = logging.getLogger("HAMED")
 print("--- APPLICATION IS STARTING ---")
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
@@ -453,7 +453,7 @@ async def lifespan(app: FastAPI):
     if DB_BACKEND == "sqlite" and db_conn:
         await db_conn.close()
 
-app = FastAPI(title="VROOM Panel", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="HAMED Panel", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -485,7 +485,7 @@ error_logs: deque = deque(maxlen=2000)
 CACHE_TTL = 60
 link_cache: dict = {}
 
-SESSION_COOKIE = "VROOM_session"
+SESSION_COOKIE = "HAMED_session"
 UNLIMITED_QUOTA_BYTES = 53687091200000
 
 ADMIN_PASSWORD_HASH: str = ""
@@ -563,7 +563,7 @@ async def telegram_reporter():
             chat_row = await db_fetchone("SELECT value FROM settings WHERE key = 'tg_chat_id'", "SELECT value FROM settings WHERE key = 'tg_chat_id'")
             if token_row and chat_row and token_row["value"] and chat_row["value"]:
                 msg = (
-                    f"📊 VROOM Panel Stats\n"
+                    f"📊 HAMED Panel Stats\n"
                     f"🕒 Uptime: {uptime()}\n"
                     f"🔗 Conns: {len(connections)}\n"
                     f"📦 Traffic: {round(stats['total_bytes']/(1024*1024),2)} MB\n"
@@ -615,7 +615,7 @@ def code_to_flag(code: str) -> str:
     except:
         return ""
 
-def generate_vless_link(uid: str, remark: str = "VROOM", address: str = None, extra: dict = None) -> str:
+def generate_vless_link(uid: str, remark: str = "HAMED", address: str = None, extra: dict = None) -> str:
     cache_key = f"{uid}:{remark}:{address}:{json.dumps(extra) if extra else ''}"
     if cache_key in link_cache and link_cache[cache_key]["expires"] > time.time():
         return link_cache[cache_key]["link"]
@@ -691,7 +691,7 @@ def log_event(etype: str, message: str, ip: str = "", ua: str = ""):
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    return {"service": "VROOM Panel", "version": "1.1.0", "status": "active", "domain": get_domain()}
+    return {"service": "HAMED Panel", "version": "1.1.0", "status": "active", "domain": get_domain()}
 
 @app.get("/health")
 async def health():
@@ -764,13 +764,13 @@ async def notify_telegram_login(ip: str, ua: str):
         except: pass
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     if lang == 'fa':
-        default_login = f"🔐 ورود VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
+        default_login = f"🔐 ورود HAMED\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
     else:
-        default_login = f"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
+        default_login = f"🔐 HAMED Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {now_str}"
     msg = templates.get('login', default_login)
     msg = msg.replace("{ip}", ip).replace("{ua}", ua).replace("{time}", now_str)
     panel_url = f"https://{get_domain()}/panel"
-    msg += f'\n\n<a href="{panel_url}">Open VROOM Panel</a>'
+    msg += f'\n\n<a href="{panel_url}">Open HAMED Panel</a>'
     url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1170,7 +1170,7 @@ async def create_link(request: Request, _=Depends(require_auth)):
         "uuid": uid, "label": label, "limit_bytes": limit_bytes, "used_bytes": 0,
         "max_connections": max_conn, "active": True, "created_at": now,
         "expires_at": expires_at, "color": color, "flag": flag, "fragment": fragment,
-        "vless_link": generate_vless_link(uid, remark=f"VROOM-{label}", extra=extra),
+        "vless_link": generate_vless_link(uid, remark=f"HAMED{label}", extra=extra),
     }
 
 @app.get("/api/links")
@@ -1205,7 +1205,7 @@ async def list_links(_=Depends(require_auth)):
             "flag": row.get("flag", ""),
             "fragment": row.get("fragment", ""),
             "current_connections": await count_connections_for_link(uid),
-            "vless_link": generate_vless_link(uid, remark=f"VROOM-{row['label']}", extra=extra),
+            "vless_link": generate_vless_link(uid, remark=f"HAMED-{row['label']}", extra=extra),
         })
     return {"links": result}
 
@@ -1608,7 +1608,7 @@ async def subscription_page(uid: str, request: Request):
     async with CUSTOM_ADDRESSES_LOCK:
         addresses = list(CUSTOM_ADDRESSES)
     
-    server_link = generate_vless_link(uid, remark=f"VROOM-{link['label']}")
+    server_link = generate_vless_link(uid, remark=f"HAMED-{link['label']}")
     config_base64 = base64.b64encode(server_link.encode()).decode()
     
     used_gb = round(link['used_bytes'] / (1024 * 1024 * 1024), 2)
@@ -1653,7 +1653,7 @@ async def subscription_page(uid: str, request: Request):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>🚀 VROOM</title>
+    <title>🚀 HAMED</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Vazirmatn:wght@300;400;700;900&display=swap" rel="stylesheet">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -2243,8 +2243,8 @@ async def subscription_page(uid: str, request: Request):
             <span id="notificationText">ارتباط با ایستگاه فضایی برقرار است / Connection established</span>
         </div>
         
-        <div class="badge">✦ VROOM</div>
-        <h1 class="glow-purple">🚀 VROOM</h1>
+        <div class="badge">✦ HAMED</div>
+        <h1 class="glow-purple">🚀 HAMED</h1>
         <div class="subtitle" id="subtitleText">GATEWAY // درگاه اتصال</div>
         
         <div class="info-grid">
@@ -2288,11 +2288,11 @@ async def subscription_page(uid: str, request: Request):
             <button class="btn btn-success btn-sm" onclick="showQR()" id="qrBtn">📱 QR</button>
         </div>
         
-        <div class="footer-text">✦ VROOM GATEWAY v3.0 ✦</div>
+        <div class="footer-text">✦ HAMED GATEWAY v3.0 ✦</div>
     </div>
     
     <script>
-        let currentLang = localStorage.getItem('vroom_sub_lang') || 'fa';
+        let currentLang = localStorage.getItem('HAMED_sub_lang') || 'fa';
         const translations = {{
             fa: {{
                 loader: '🌌 INITIALIZING... / در حال اتصال...',
@@ -2345,7 +2345,7 @@ async def subscription_page(uid: str, request: Request):
             document.getElementById('langText').textContent = currentLang === 'fa' ? '🇮🇷 فارسی' : '🇬🇧 English';
             document.documentElement.lang = currentLang;
             document.documentElement.dir = currentLang === 'fa' ? 'rtl' : 'ltr';
-            localStorage.setItem('vroom_sub_lang', currentLang);
+            localStorage.setItem('HAMED_sub_lang', currentLang);
         }}
         if (currentLang === 'en') toggleLang();
 
@@ -2591,7 +2591,7 @@ async def notify_telegram_event(event: str, label: str, uid: str):
     msg = templates.get(event, default_msg)
     msg = msg.replace("{label}", label).replace("{uid}", uid)
     panel_url = f"https://{get_domain()}/panel"
-    msg += f'\n\n<a href="{panel_url}">Open VROOM Panel</a>'
+    msg += f'\n\n<a href="{panel_url}">Open HAMED Panel</a>'
     url = f"https://api.telegram.org/bot{token_row['value']}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -2747,7 +2747,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>VROOM Panel</title>
+<title>HAMED Panel</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -2951,10 +2951,10 @@ textarea.fi{resize:vertical;min-height:90px;}
       <div style="text-align:center;margin-bottom:32px;">
         <svg width="100%" viewBox="0 0 180 80" height="100%">
           <rect width="180" height="80" rx="12" fill="var(--primary)" fill-opacity="0.1"/>
-          <text x="90" y="58" font-family="'Orbitron',sans-serif" font-size="40" font-weight="900" fill="var(--primary)" text-anchor="middle">VROOM</text>
+          <text x="90" y="58" font-family="'Orbitron',sans-serif" font-size="40" font-weight="900" fill="var(--primary)" text-anchor="middle">HAMED</text>
         </svg>
         <div style="font-family:'Orbitron',sans-serif;font-size:1.5rem;font-weight:900;color:var(--primary);margin-top:12px;display:flex;align-items:center;justify-content:center;gap:8px;">
-          VROOM Panel <span style="font-size:0.8rem; font-family:'Inter'; color:var(--bg); background:var(--primary); padding:2px 6px; border-radius:4px;">V 1.1.0</span>
+          HAMED Panel <span style="font-size:0.8rem; font-family:'Inter'; color:var(--bg); background:var(--primary); padding:2px 6px; border-radius:4px;">V 1.1.0</span>
         </div>
         <div style="font-size:1rem;color:var(--text3);margin-top:8px;" data-en="Enter your password" data-fa="رمز عبور را وارد کنید">Enter your password</div>
         <div id="login-custom-message" style="margin-top:20px; text-align:center; color:var(--text3); font-size:0.9rem;"></div>
@@ -2969,7 +2969,7 @@ textarea.fi{resize:vertical;min-height:90px;}
   <header class="header">
     <div class="header-inner">
       <div style="display:flex;align-items:center;gap:16px;">
-        <span class="logo">VROOM</span><span class="version-tag">v1.1.0</span>
+        <span class="logo">HAMED</span><span class="version-tag">v1.1.0</span>
         <span id="panel-clock" style="font-weight:600;color:var(--primary);margin-left:8px;font-size:0.9rem;"></span>
         <nav class="header-nav" id="mainNav">
           <button class="nav-link active" data-page="dashboard">📊 <span data-en="Dashboard" data-fa="داشبورد">Dashboard</span></button>
@@ -3134,10 +3134,10 @@ example.com
           <input type="hidden" id="tg-lang-hidden" value="en">
         </div>
         <div class="fg"><label class="fl">Custom Templates (EN)</label>
-          <textarea class="fi" id="tg-templates-en" rows="4">{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 VROOM Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}</textarea>
+          <textarea class="fi" id="tg-templates-en" rows="4">{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 HAMED Panel login\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}</textarea>
         </div>
         <div class="fg"><label class="fl">Custom Templates (FA)</label>
-          <textarea class="fi" id="tg-templates-fa" rows="4">{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود VROOM\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}</textarea>
+          <textarea class="fi" id="tg-templates-fa" rows="4">{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود HAMED\n🌐 IP: {ip}\n🤖 UA: {ua}\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}</textarea>
         </div>
         <div style="margin:6px 0;">
           <button class="btn btn-outline btn-sm" onclick="previewTemplate()">Preview</button>
@@ -3834,7 +3834,7 @@ async function cpSub(uid){
   toast('User Dashboard URL copied!');
 }
 function showQR(txt){if(txt.length>2000){toast('Link too long for QR',true);return;}const img=$m('qr-img');img.src='https://api.qrserver.com/v1/create-qr-code/?size=280x280&data='+encodeURIComponent(txt);$m('mo-qr').classList.add('show');}
-function dlQR(){const a=document.createElement('a');a.href=$m('qr-img').src;a.download='vroom-qr.png';a.click();}
+function dlQR(){const a=document.createElement('a');a.href=$m('qr-img').src;a.download='HAMED-qr.png';a.click();}
 
 function updateSpeedDisplaySafe(id, bps) {
   const el = $m(id);
@@ -3949,7 +3949,7 @@ async function saveAddrEdit(){const newAddr=$m('edit-addr-input').value.trim();i
 async function addBatchAddrs(){const raw=$m('batch-addrs').value;const lines=raw.split('\n').map(l=>l.trim()).filter(l=>l);if(!lines.length)return;try{const r=await fetch('/api/addresses/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addresses:lines})});if(r.status===401){showLogin();return;}const d=await r.json();toast(`Added ${d.added} addresses`+(d.errors?` (${d.errors} errors)`:''));$m('batch-addrs').value='';await loadAddrs();}catch(e){toast('Batch add failed',true);}}
 async function deleteAllAddrs(){if(!confirm('Delete all addresses?'))return;try{await fetch('/api/addresses',{method:'DELETE'});toast('All deleted');await loadAddrs();}catch{toast('Error',true);}}
 async function delAddr(i){if(!confirm('Delete?'))return;try{await fetch('/api/addresses/'+i,{method:'DELETE'});toast('Deleted');await loadAddrs();}catch{toast('Error',true);}}
-async function exportLinks(){try{const r=await fetch('/api/export-links');const data=await r.json();const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='vroom-links.json';a.click();}catch{toast('Export failed',true);}}
+async function exportLinks(){try{const r=await fetch('/api/export-links');const data=await r.json();const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='HAMED-links.json';a.click();}catch{toast('Export failed',true);}}
 async function importLinks(input){const file=input.files[0];if(!file)return;try{const text=await file.text();const data=JSON.parse(text);const r=await fetch('/api/import-links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const res=await r.json();toast(`Imported ${res.imported} links`);loadLinks();loadStats();}catch{toast('Import failed',true);}input.value='';}
 
 let currentProvider=null;
@@ -4055,7 +4055,7 @@ function copyReachableSorted(){const rows=Array.from($m('scan-tbody').querySelec
 async function loadLogs(){try{const r=await fetch('/api/logs');if(r.status===401){showLogin();return;}const d=await r.json();const logs=d.logs||[];const tbody=$m('logs-tbody'),empty=$m('logs-empty');if(!tbody)return;if(!logs.length){tbody.innerHTML='';empty.style.display='block';return;}empty.style.display='none';tbody.innerHTML=logs.map((l,i)=>{const local=getPanelTime(l.time);return`<tr><td>${i+1}</td><td>${local.toISOString().replace('T',' ').split('.')[0]}</td><td>${esc(l.type||'Event')}</td><td>${esc(l.error||'')}</td></tr>`}).join('');}catch(err){console.error('loadLogs error:',err);}}
 async function loadLoginLogs(){try{const r=await fetch('/api/login-logs');if(!r.ok)return;const d=await r.json();const tbody=$m('login-logs-tbody');if(!tbody)return;tbody.innerHTML=d.logs.map(l=>`<tr><td>${timeAgo(l.timestamp)}</td><td><div style="font-weight:600">${esc(l.ip)}</div><div style="font-size:0.7rem;color:var(--text3);max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(l.user_agent)}">${esc(l.user_agent)}</div></td><td style="color:${l.success?'var(--green)':'var(--red)'}">${l.success?'✅ '+t('success'):'❌ '+t('failed')}</td></tr>`).join('');}catch(e){}}
 function timeAgo(ts){const then=new Date(ts),now=new Date(),diff=Math.floor((now-then)/1000);if(lang==='fa'){if(diff<60)return t('justNow');if(diff<3600)return t('minsAgo',{n:Math.floor(diff/60)});if(diff<86400)return t('hoursAgo',{n:Math.floor(diff/3600)});return new Date(ts).toLocaleDateString('fa-IR');}else{if(diff<60)return t('justNow');if(diff<3600)return t('minsAgo',{n:Math.floor(diff/60)});if(diff<86400)return t('hoursAgo',{n:Math.floor(diff/3600)});return new Date(ts).toLocaleDateString();}}
-async function loadTelegramSettings(){try{const r=await fetch('/api/settings');if(r.status===401){showLogin();return;}const d=await r.json();$m('tg-token').value=d.tg_bot_token||'';$m('tg-chat-id').value=d.tg_chat_id||'';$m('tg-interval').value=d.telegram_interval||'1';const events=(d.telegram_events||'').split(',');document.querySelectorAll('.tg-event').forEach(cb=>cb.checked=events.includes(cb.value));$m('tg-templates-en').value=d.telegram_templates_en||'{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 VROOM Panel login\\n🌐 IP: {ip}\\n🤖 UA: {ua}\\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}';$m('tg-templates-fa').value=d.telegram_templates_fa||'{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود VROOM\\n🌐 IP: {ip}\\n🤖 UA: {ua}\\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}';
+async function loadTelegramSettings(){try{const r=await fetch('/api/settings');if(r.status===401){showLogin();return;}const d=await r.json();$m('tg-token').value=d.tg_bot_token||'';$m('tg-chat-id').value=d.tg_chat_id||'';$m('tg-interval').value=d.telegram_interval||'1';const events=(d.telegram_events||'').split(',');document.querySelectorAll('.tg-event').forEach(cb=>cb.checked=events.includes(cb.value));$m('tg-templates-en').value=d.telegram_templates_en||'{"quota_90":"⚠️ {label} ({uid}) used 90% of quota","login":"🔐 HAMED Panel login\\n🌐 IP: {ip}\\n🤖 UA: {ua}\\n📅 {time}","expiry":"⏰ {label} expired","error":"❌ Error on {label}: check logs"}';$m('tg-templates-fa').value=d.telegram_templates_fa||'{"quota_90":"⚠️ {label} ({uid}) ۹۰٪ کوتا","login":"🔐 ورود HAMED\\n🌐 IP: {ip}\\n🤖 UA: {ua}\\n📅 {time}","expiry":"⏰ {label} منقضی شد","error":"❌ خطا در {label}: بررسی شود"}';
 const tgLang = d.telegram_lang || 'en';
 const toggle = $m('tg-lang-toggle');
 if (tgLang === 'fa') {
@@ -4068,7 +4068,7 @@ if (tgLang === 'fa') {
     $m('tg-lang-hidden').value = 'en';
 }}catch(err){console.error('loadTelegram error:',err);}}
 async function saveTelegramSettings(){const token=$m('tg-token').value.trim(),chat=$m('tg-chat-id').value.trim();const interval=$m('tg-interval').value.trim();const events=Array.from(document.querySelectorAll('.tg-event:checked')).map(cb=>cb.value).join(',');const templates_en=$m('tg-templates-en').value.trim();const templates_fa=$m('tg-templates-fa').value.trim();const tglang=$m('tg-lang-hidden').value;try{await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_bot_token:token,tg_chat_id:chat,telegram_interval:interval,telegram_events:events,telegram_templates_en:templates_en,telegram_templates_fa:templates_fa,telegram_lang:tglang})});toast('Saved');}catch{toast('Error',true);}}
-async function testTelegram(){const token=$m('tg-token').value.trim(),chat=$m('tg-chat-id').value.trim();if(!token||!chat){toast('Fill token and chat ID',true);return;}const tglang=$m('tg-lang-hidden').value;const msg = tglang==='fa'?'✅ VROOM متصل شد':'✅ VROOM is connected';try{const res=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat,text:msg})});if(res.ok)toast('Test message sent!');else toast('Failed to send',true);}catch{toast('Error',true);}}
+async function testTelegram(){const token=$m('tg-token').value.trim(),chat=$m('tg-chat-id').value.trim();if(!token||!chat){toast('Fill token and chat ID',true);return;}const tglang=$m('tg-lang-hidden').value;const msg = tglang==='fa'?'✅ HAMED متصل شد':'✅ HAMED is connected';try{const res=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat,text:msg})});if(res.ok)toast('Test message sent!');else toast('Failed to send',true);}catch{toast('Error',true);}}
 function toggleTgLang() {
     const toggle = $m('tg-lang-toggle');
     toggle.classList.toggle('on');
@@ -4091,7 +4091,7 @@ function previewTemplate() {
         });
         const templates = JSON.parse(sanitizedValue);
         const mockData = {
-            label: "VROOM_User", uid: "vroom-7b8c-49ed-b45a",
+            label: "HAMED_User", uid: "HAMED-7b8c-49ed-b45a",
             ip: "85.201.32.44", ua: "Mozilla/5.0 (iPhone; iOS 18)",
             time: new Date().toISOString().replace('T', ' ').substring(0, 19)
         };
@@ -4106,7 +4106,7 @@ function previewTemplate() {
         }
         const mockDomain = window.location.host || "your-domain.com";
         previewHTML += `<div style="margin-top: 6px; padding-top: 4px; color: #4caf50;">`;
-        previewHTML += `⚠️ <i>Auto Appended:</i><br>Open VROOM Panel (Link: https://${mockDomain}/panel)`;
+        previewHTML += `⚠️ <i>Auto Appended:</i><br>Open HAMED Panel (Link: https://${mockDomain}/panel)`;
         previewHTML += `</div>`;
         previewDiv.innerHTML = previewHTML;
         previewDiv.style.border = "1px solid var(--primary)";
@@ -4171,7 +4171,7 @@ if __name__ == "__main__":
     import subprocess
     import os
     port = int(os.environ.get("PORT", CONFIG.get("port", 8080)))
-    logger.info(f"Starting VROOM Panel on port {port}")
+    logger.info(f"Starting HAMED Panel on port {port}")
     try:
         subprocess.run(
             [
